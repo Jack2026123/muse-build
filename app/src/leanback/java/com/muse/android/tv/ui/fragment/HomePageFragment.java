@@ -35,6 +35,7 @@ import com.muse.android.tv.ui.activity.CastActivity;
 import com.muse.android.tv.ui.activity.CollectActivity;
 import com.muse.android.tv.ui.activity.HistoryActivity;
 import com.muse.android.tv.ui.activity.HomeActivity;
+import com.muse.android.tv.ui.activity.BookshelfActivity;
 import com.muse.android.tv.ui.activity.KeepActivity;
 import com.muse.android.tv.ui.activity.LiveActivity;
 import com.muse.android.tv.ui.activity.PushActivity;
@@ -70,9 +71,11 @@ import java.util.List;
  * - 功能行间距由 16 改为 22（原版 k(22,1,1)；Vod 行 16、历史行 16+ALIGNED 与原版一致）。
  * - 布局改回原版 fragment_home：ProgressLayout 包 VerticalGridView（padding 26/12/26/24），
  *   旧版的裸 VerticalGridView + "progress" 适配器项已删掉。
- * 未搬的两处原版细节（我方 bean 不支持，见 DIFF-REPORT）：
- * - a0() 的首末功能首尾焦点环绕（Func bean 无 nextFocusLeft/Right 字段）。
+ * 未搬的一处原版细节（我方 bean 不支持，见 DIFF-REPORT）：
  * - f0() 的标题 nextFocusDown（标题 DOWN 走 Activity 的 focusCurrentPageFirst，与旧版相同）。
+ * a0() 的首末功能首尾焦点环绕已按原版补回（2026-11-01 Liu 下令三线电视版全改）：Func 带
+ * generateViewId 的 id 与 nextFocusLeft/Right 字段，getFuncItems 组装后首末互指，
+ * FuncPresenter 绑定时 setId + setNextFocusLeft/RightId，与原版 R3/x 一致。
  * 首页 Vod 不钻文件夹（与原版一致：直接进播放页/收藏）。
  */
 public class HomePageFragment extends BaseFragment implements VodPresenter.OnClickListener, FuncPresenter.OnClickListener, HistoryPresenter.OnClickListener {
@@ -152,13 +155,17 @@ public class HomePageFragment extends BaseFragment implements VodPresenter.OnCli
         b0();
     }
 
-    /** 原版 P3/e.a0()：功能行来自 Button.getButtons()，直播在 LiveConfig 无 URL 时排除。首末焦点环绕未搬（见类注释）。 */
+    /** 原版 P3/e.a0()：功能行来自 Button.getButtons()，直播在 LiveConfig 无 URL 时排除；组装后按原版首末互指（焦点环绕）。 */
     private List<Func> getFuncItems() {
         List<Func> items = new ArrayList<>();
         boolean hasLiveUrl = LiveConfig.hasUrl();
         for (Button button : Button.getButtons()) {
             if (!hasLiveUrl && button.getResId() == R.string.home_live) continue;
             items.add(Func.create(button.getResId()));
+        }
+        if (items.size() > 1) {
+            items.get(0).setNextFocusLeft(items.get(items.size() - 1).getId());
+            items.get(items.size() - 1).setNextFocusRight(items.get(0).getId());
         }
         return items;
     }
@@ -292,6 +299,7 @@ public class HomePageFragment extends BaseFragment implements VodPresenter.OnCli
         else if (item.getResId() == R.string.home_cast) startActivity(new Intent(requireActivity(), CastActivity.class));
         else if (item.getResId() == R.string.home_history_short) startActivity(new Intent(requireActivity(), HistoryActivity.class));
         else if (item.getResId() == R.string.home_keep) KeepActivity.start(requireActivity());
+        else if (item.getResId() == R.string.shelf_title) BookshelfActivity.start(requireActivity());
         else if (item.getResId() == R.string.home_push) PushActivity.start(requireActivity());
         else if (item.getResId() == R.string.home_search) SearchActivity.start(requireActivity());
         else if (item.getResId() == R.string.home_setting) SettingActivity.start(requireActivity());

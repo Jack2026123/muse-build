@@ -125,11 +125,13 @@ public class VideoActivity extends PlaybackActivity implements VodPlaybackHost, 
     private Runnable mR3;
     private Runnable mR4;
     private Runnable mR5;
+    private long mLastTxBytes;
     private long mLastRxBytes;
     private long mLastRxTime;
     private Player mMediaInfoPlayer;
     private boolean mMediaInfo;
     private History mHistory;
+    private boolean mNovelTtsContinue;
     private boolean fullscreen;
     private boolean useParse;
 
@@ -168,9 +170,20 @@ public class VideoActivity extends PlaybackActivity implements VodPlaybackHost, 
         start(activity, key, id, name, pic, mark, false, false);
     }
 
+    // 跨类型切集直达的目标集序号（阅读器/图片页强播时暂存，紧随的 start 调用写入 intent 后清零）
+    private static int sPendingEpisodeIndex = -1;
+
+    /** 跨类型切集强播：不经自动播放开关，进详情直接播指定序号的集（多集按序号定位不串位）。 */
+    public static void startForceEpisode(Activity activity, String key, String id, String name, String pic, String mark, int episodeIndex) {
+        sPendingEpisodeIndex = episodeIndex;
+        start(activity, key, id, name, pic, mark);
+    }
+
     public static void start(Activity activity, String key, String id, String name, String pic, String mark, boolean collect, boolean cast) {
         Intent intent = new Intent(activity, VideoActivity.class);
         intent.putExtra("collect", collect);
+        if (sPendingEpisodeIndex >= 0) intent.putExtra("episode_index", sPendingEpisodeIndex);
+        sPendingEpisodeIndex = -1;
         intent.putExtra("cast", cast);
         intent.putExtra("mark", mark);
         intent.putExtra("name", name);
@@ -442,6 +455,11 @@ public class VideoActivity extends PlaybackActivity implements VodPlaybackHost, 
     }
 
     @Override
+    public int getEpisodeIndex() {
+        return getIntent().getIntExtra("episode_index", -1);
+    }
+
+    @Override
     public boolean isSiteChangeable() {
         return getSite().isChangeable();
     }
@@ -546,10 +564,21 @@ public class VideoActivity extends PlaybackActivity implements VodPlaybackHost, 
                     urls.add(episode.getUrl());
                 }
             }
-            NovelActivity.startForResult(this, title, url, names, urls, position);
+            NovelActivity.startForResult(this, title, url, names, urls, position, getHistoryKey(), mHistory.getVodName(), mHistory.getVodPic(), getSite().getName(), mNovelTtsContinue, getKey(), getId(), result.getFlag());
+            mNovelTtsContinue = false;
         } else if (url != null && url.startsWith("pics://")) {
-            ImageActivity.start(this, title, url, result.getHeader());
-            finish();
+            // 漫画：有话列表时走 startForResult（不 finish），阅读器内选话回传后由 onActivityResult 重新 selectEpisode；
+            // 无话列表时沿用旧路（直接进图、finish 上一级）。
+            if (mEpisodeAdapter != null && mEpisodeAdapter.getItemCount() > 0) {
+                ArrayList<String> names = new ArrayList<>();
+                for (Episode episode : mEpisodeAdapter.getItems()) names.add(episode.getName());
+                ArrayList<String> urls = new ArrayList<>();
+                for (Episode episode : mEpisodeAdapter.getItems()) urls.add(episode.getUrl());
+                ImageActivity.startForResult(this, title, url, result.getHeader(), names, urls, mEpisodeAdapter.getPosition(), getKey(), getId(), result.getFlag(), mHistory.getVodName(), mHistory.getVodPic());
+            } else {
+                ImageActivity.start(this, title, url, result.getHeader());
+                finish();
+            }
         } else {
             startPlayer(getHistoryKey(), result, useParse, getSite().getTimeout(), startPositionMs, metadata);
         }
@@ -749,7 +778,10 @@ public class VideoActivity extends PlaybackActivity implements VodPlaybackHost, 
     }
 
     private void checkId() {
-        mVod.setForcePlayOnce(true);
+        // 强播直达（跨类型切集）或自动播放开关开（电视默认开，Liu 2026-11-07 定）才强制播；
+        // 开关关时详情回来只高亮当前集、等用户点播；开+延时>0 时不强播，
+        // 交给 seamless 的延时档（标记选中后读秒起播，开关状态已由设置弹窗写回共享键）
+        if (getEpisodeIndex() >= 0 || (PlayerSetting.isAutoPlayTv() && PlayerSetting.getAutoPlayDelay() <= 0)) mVod.setForcePlayOnce(true);
         mVod.checkId();
     }
 
@@ -815,12 +847,21 @@ public class VideoActivity extends PlaybackActivity implements VodPlaybackHost, 
         mVod.selectQuality(result);
     }
 
+    /**
+     * 详情没出内容（如源没写播放数组）时 mHistory 为空；集数组渲染与排序/倒播入口
+     * 仍会走到，直接调 mHistory 会空指针崩溃，统一走这里判空。
+     */
+    private boolean isRevSort() {
+        return mHistory != null && mHistory.isRevSort();
+    }
+
     private void setArrayAdapter(int size) {
+        if (mHistory == null) return;
         List<String> items = new ArrayList<>();
         items.add(getString(R.string.play_reverse));
         items.add(getString(mHistory.getRevPlayText()));
         mBinding.array.setVisibility(size > 1 ? View.VISIBLE : View.GONE);
-        if (mHistory.isRevSort()) for (int i = size; i > 0; i -= 20) items.add(i + "-" + Math.max(i - 19, 1));
+        if (isRevSort()) for (int i = size; i > 0; i -= 20) items.add(i + "-" + Math.max(i - 19, 1));
         else for (int i = 0; i < size; i += 20) items.add((i + 1) + "-" + Math.min(i + 20, size));
         mArrayAdapter.addAll(items);
     }
@@ -849,12 +890,13 @@ public class VideoActivity extends PlaybackActivity implements VodPlaybackHost, 
 
     @Override
     public void onRevSort() {
-        mVod.setRevSort(!mHistory.isRevSort());
+        mVod.setRevSort(!isRevSort());
         mVod.reverseEpisode(false);
     }
 
     @Override
     public void onRevPlay(TextView view) {
+        if (mHistory == null) return;
         mVod.setRevPlay(!mHistory.isRevPlay());
         view.setText(mHistory.getRevPlayText());
         Notify.show(mHistory.getRevPlayHint());
@@ -1067,9 +1109,13 @@ public class VideoActivity extends PlaybackActivity implements VodPlaybackHost, 
 
     private void hideProgress() {
         mBinding.progress.getRoot().setVisibility(View.GONE);
-        mBinding.playInfo.setVisibility(View.GONE);
-        App.removeCallbacks(mR3);
-        Traffic.reset();
+        // Persistent playInfo: keep it and its tick when the switch is on, so the
+        // readout survives loading finishing. Switch off: old hide + reset behavior.
+        if (!PlayerSetting.isNetInfo()) {
+            mBinding.playInfo.setVisibility(View.GONE);
+            App.removeCallbacks(mR3);
+            Traffic.reset();
+        }
     }
 
     private void showError(String text) {
@@ -1117,7 +1163,9 @@ public class VideoActivity extends PlaybackActivity implements VodPlaybackHost, 
     private void hideControl() {
         mBinding.control.getRoot().setVisibility(View.GONE);
         App.removeCallbacks(mR1);
-        if (!isVisible(mBinding.progress.getRoot())) {
+        // Persistent playInfo (net_info switch on): playInfo lives outside control,
+        // so hiding control must not hide it or stop its 1s tick. Switch off: old behavior.
+        if (!PlayerSetting.isNetInfo() && !isVisible(mBinding.progress.getRoot())) {
             mBinding.playInfo.setVisibility(View.GONE);
             App.removeCallbacks(mR3);
         }
@@ -1215,11 +1263,19 @@ public class VideoActivity extends PlaybackActivity implements VodPlaybackHost, 
         // the device-wide counters so the readout still works there.
         view.setVisibility(View.VISIBLE);
         long now = System.currentTimeMillis();
-        long total = TrafficStats.getTotalRxBytes() / 1024;
-        long speed = (total - mLastRxBytes) * 1000 / Math.max(now - mLastRxTime, 1);
-        mLastRxBytes = total;
+        long totalTx = TrafficStats.getTotalTxBytes();
+        long totalRx = TrafficStats.getTotalRxBytes() / 1024;
+        long elapsed = Math.max(now - mLastRxTime, 1);
+        long txSpeed = totalTx == TrafficStats.UNSUPPORTED ? -1 : (totalTx / 1024 - mLastTxBytes) * 1000 / elapsed;
+        long rxSpeed = (totalRx - mLastRxBytes) * 1000 / elapsed;
+        mLastTxBytes = totalTx == TrafficStats.UNSUPPORTED ? mLastTxBytes : totalTx / 1024;
+        mLastRxBytes = totalRx;
         mLastRxTime = now;
-        view.setText(speed < 1000 ? speed + " KB/s" : String.format("%.1f MB/s", speed / 1024f));
+        view.setText("[↑" + formatFallbackSpeed(txSpeed) + " ↓" + formatFallbackSpeed(rxSpeed) + "]");
+    }
+
+    private String formatFallbackSpeed(long speed) {
+        return speed < 0 ? "-- KB/s" : speed < 1000 ? speed + " KB/s" : String.format("%.1f MB/s", speed / 1024f);
     }
 
     private void setR1Callback() {
@@ -1555,10 +1611,14 @@ public class VideoActivity extends PlaybackActivity implements VodPlaybackHost, 
     protected void onActivityResult(int requestCode, int resultCode, @Nullable Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
         if (resultCode == RESULT_OK && requestCode == 1001) PlaybackIntent.onExternalResult(data, service()::dispatchNext, controller()::seekTo);
-        if (requestCode == NovelActivity.REQUEST_NOVEL) {
+        if (requestCode == NovelActivity.REQUEST_NOVEL || requestCode == ImageActivity.REQUEST_IMAGE) {
             int position = data == null ? -1 : data.getIntExtra("episode_position", -1);
             if (resultCode != RESULT_OK || position < 0 || mEpisodeAdapter == null || position >= mEpisodeAdapter.getItemCount()) finish();
-            else mVod.selectEpisode(mEpisodeAdapter.getItems().get(position));
+            else {
+                // 小说朗读跨章接力：上一实例离开时正在朗读，则新实例自动续读。
+                mNovelTtsContinue = requestCode == NovelActivity.REQUEST_NOVEL && data.getBooleanExtra("tts_continue", false);
+                mVod.selectEpisode(mEpisodeAdapter.getItems().get(position));
+            }
         }
     }
 

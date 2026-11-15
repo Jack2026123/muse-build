@@ -20,12 +20,6 @@
         android:visible="false" />
 
     <item
-        android:id="@+id/bookshelf"
-        android:icon="@drawable/ic_action_bookshelf"
-        android:title="@string/shelf_title"
-        android:visible="false" />
-
-    <item
         android:id="@+id/setting"
         android:icon="@drawable/ic_nav_setting"
         android:title="@string/nav_setting"

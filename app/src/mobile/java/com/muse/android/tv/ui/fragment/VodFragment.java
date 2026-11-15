@@ -35,6 +35,7 @@ import com.muse.android.tv.impl.FilterListener;
 import com.muse.android.tv.impl.SiteListener;
 import com.muse.android.tv.setting.PlayerSetting;
 import com.muse.android.tv.model.SiteViewModel;
+import com.muse.android.tv.ui.activity.BookshelfActivity;
 import com.muse.android.tv.ui.activity.HistoryActivity;
 import com.muse.android.tv.ui.activity.KeepActivity;
 import com.muse.android.tv.ui.activity.SearchActivity;
@@ -228,6 +229,7 @@ public class VodFragment extends BaseFragment implements ConfigListener, SiteLis
 
     private boolean onMenuItemClick(MenuItem item) {
         if (item.getItemId() == R.id.keep) KeepActivity.start(requireActivity());
+        else if (item.getItemId() == R.id.bookshelf) BookshelfActivity.start(requireActivity());
         else if (item.getItemId() == R.id.search) SearchActivity.start(requireActivity());
         else if (item.getItemId() == R.id.history) HistoryActivity.start(requireActivity());
         return true;

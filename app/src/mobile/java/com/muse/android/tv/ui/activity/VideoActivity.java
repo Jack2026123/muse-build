@@ -40,7 +40,6 @@ import androidx.transition.TransitionManager;
 import androidx.viewbinding.ViewBinding;
 
 import com.bumptech.glide.request.transition.Transition;
-import com.github.catvod.crawler.DebugLogStore;
 import com.github.catvod.crawler.SpiderDebug;
 import com.muse.android.tv.App;
 import com.muse.android.tv.Constant;
@@ -64,6 +63,7 @@ import com.muse.android.tv.db.AppDatabase;
 import com.muse.android.tv.event.CastEvent;
 import com.muse.android.tv.event.RefreshEvent;
 import com.muse.android.tv.impl.CustomTarget;
+import com.muse.android.tv.impl.ParseCallback;
 import com.muse.android.tv.model.VideoViewModel;
 import com.muse.android.tv.playback.PlaybackAction;
 import com.muse.android.tv.playback.PlaybackIntent;
@@ -76,6 +76,7 @@ import com.muse.android.tv.playback.vod.VodPlaybackController;
 import com.muse.android.tv.playback.vod.VodPlaybackHost;
 import com.muse.android.tv.playback.vod.VodPlaybackMedia;
 import com.muse.android.tv.player.media.PlaySpec;
+import com.muse.android.tv.player.parse.ParseJob;
 import com.muse.android.tv.service.PlaybackService;
 import com.muse.android.tv.setting.DanmakuSetting;
 import com.muse.android.tv.setting.PlayerSetting;
@@ -106,7 +107,9 @@ import com.muse.android.tv.utils.Clock;
 import com.muse.android.tv.utils.FileChooser;
 import com.muse.android.tv.utils.FileUtil;
 import com.muse.android.tv.utils.ImgUtil;
+import com.muse.android.tv.utils.DownloadHandoff;
 import com.muse.android.tv.utils.Notify;
+import com.muse.android.tv.utils.Task;
 import com.muse.android.tv.utils.PiP;
 import com.muse.android.tv.utils.ResUtil;
 import com.muse.android.tv.utils.Sniffer;
@@ -124,6 +127,8 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.text.DecimalFormat;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -156,6 +161,7 @@ public class VideoActivity extends PlaybackActivity implements Clock.Callback, C
     private boolean mMediaInfo;
     /** #104：本详情是否已发起过播放请求（onPlaybackRequested 置位，新详情 renderDetail 时清零）。 */
     private boolean mPlayRequested;
+    private boolean mDownloading;
     private long mInfoTxBytes;
     private long mInfoRxBytes;
     private long mInfoTime;
@@ -390,6 +396,7 @@ public class VideoActivity extends PlaybackActivity implements Clock.Callback, C
     @SuppressLint("ClickableViewAccessibility")
     protected void initEvent() {
         mBinding.name.setOnClickListener(view -> onName());
+        mBinding.download.setOnClickListener(view -> onDownload());
         mBinding.more.setOnClickListener(view -> onMore());
         mBinding.actor.setOnClickListener(view -> onActor());
         mBinding.content.setOnClickListener(view -> onContent());
@@ -644,6 +651,94 @@ public class VideoActivity extends PlaybackActivity implements Clock.Callback, C
         player().replay(position);
     }
 
+    /** 下载当前选中的一集:与播放走同一条解析链(playerContent,必要时再走 ParseJob),
+     * 拿到真实播放地址后连同请求头交给 1DM 下载;本 App 不内置下载引擎。 */
+    private void onDownload() {
+        if (mDownloading) return;
+        Flag flag = mFlagAdapter == null || mFlagAdapter.isEmpty() ? null : mFlagAdapter.get(mFlagAdapter.getPosition());
+        Episode episode = null;
+        if (mEpisodeAdapter != null && !mEpisodeAdapter.getItems().isEmpty()) {
+            int pos = Math.min(Math.max(mEpisodeAdapter.getPosition(), 0), mEpisodeAdapter.getItems().size() - 1);
+            episode = mEpisodeAdapter.getItems().get(pos);
+        }
+        if (flag == null || episode == null) {
+            Notify.show("暂无可下载的剧集");
+            return;
+        }
+        mDownloading = true;
+        Notify.show("正在解析下载地址…");
+        String key = getKey();
+        String flagName = flag.getFlag();
+        String episodeUrl = episode.getUrl();
+        String fileName = buildDownloadName(episode);
+        Task.execute(() -> {
+            try {
+                Result result = SiteApi.playerContent(key, flagName, episodeUrl);
+                App.post(() -> onDownloadResult(result, fileName));
+            } catch (Exception e) {
+                App.post(() -> {
+                    mDownloading = false;
+                    Notify.show("解析下载地址失败");
+                });
+            }
+        });
+    }
+
+    private void onDownloadResult(Result result, String fileName) {
+        String url = result == null ? "" : result.getUrl().v();
+        if (url == null || url.isEmpty()) {
+            mDownloading = false;
+            Notify.show("解析下载地址失败");
+            return;
+        }
+        if (url.startsWith("novel://") || url.startsWith("pics://")) {
+            mDownloading = false;
+            Notify.show("这一集不是视频，无法下载");
+            return;
+        }
+        if (result.getDrm() != null) {
+            mDownloading = false;
+            Notify.show("该视频受 DRM 保护，无法下载");
+            return;
+        }
+        if (result.needParse() || result.isUseParse()) {
+            ParseJob.create(new ParseCallback() {
+                @Override
+                public void onParseSuccess(Map<String, String> headers, String parsedUrl, String from) {
+                    mDownloading = false;
+                    Map<String, String> merged = new HashMap<>(result.getHeader());
+                    if (headers != null) merged.putAll(headers);
+                    DownloadHandoff.start(VideoActivity.this, parsedUrl, withExtension(fileName, parsedUrl), merged);
+                }
+
+                @Override
+                public void onParseError() {
+                    mDownloading = false;
+                    Notify.show("解析下载地址失败");
+                }
+            }).start(result, result.isUseParse());
+        } else {
+            mDownloading = false;
+            String realUrl = result.getRealUrl();
+            DownloadHandoff.start(this, realUrl, withExtension(fileName, realUrl), result.getHeader());
+        }
+    }
+
+    private String buildDownloadName(Episode episode) {
+        String name = getName();
+        String ep = episode == null ? "" : Objects.toString(episode.getName(), "");
+        String full = ep.isEmpty() || ep.equals(name) ? name : name + "-" + ep;
+        return full == null ? "" : full.replaceAll("[\\\\/:*?\"<>|]", "_").trim();
+    }
+
+    private static String withExtension(String name, String url) {
+        if (name == null || name.isEmpty() || url == null) return name;
+        String path = url.split("[?#]")[0].toLowerCase();
+        if (path.endsWith(".m3u8")) return name + ".mp4";
+        for (String ext : new String[]{".mp4", ".mkv", ".avi", ".mov", ".flv", ".ts", ".webm", ".rmvb"}) if (path.endsWith(ext)) return name + ext;
+        return name;
+    }
+
     /**
      * novel:// 分支（#58）：蜘蛛 playerContent 返回小说载荷时，组装章节串交给内置小说阅读器，
      * 不再直交播放器（必然失败）。组装完成后结束本页（原设计）：详情页对小说集是自动播放的，
@@ -776,9 +871,6 @@ public class VideoActivity extends PlaybackActivity implements Clock.Callback, C
 
     public static String siteHomePageUrl(Site site) {
         String url = resolveHomePageUrl(site);
-        // v105 诊断：记解析出的主页地址（addPlain，不涂黑 URL；只记 origin+“/”，不带路径参数）。
-        // 再串站时日志里直接能看到是哪个地址、进的哪个站，不用猜是哪条分支给的。
-        DebugLogStore.addPlain(null, "WebPlay", "homepage key=" + (site == null ? "null" : site.getKey()) + " url=" + url);
         return url;
     }
 
@@ -855,7 +947,6 @@ public class VideoActivity extends PlaybackActivity implements Clock.Callback, C
         if (TextUtils.isEmpty(mWebUrl)) mWebUrl = episodePageUrl();
         mWebHeader = null;
         Site site = getSite();
-        DebugLogStore.add("WebPlay", "anchor key=" + getKey() + " type=" + (site == null ? -1 : site.getType()) + " id=" + getVodId() + " base=" + siteBaseUrl() + " url=" + mWebUrl);
     }
 
     /** 本片详情页地址：详情请求用的 id，绝对地址直接用，相对地址拼本站域名；裸 id 走配置里的页面模板。 */
