@@ -1582,6 +1582,13 @@ public class WebPlayActivity extends BaseActivity implements EpisodeAdapter.OnCl
                     if (mBlockedHosts.add(host)) DebugLogStore.add("WebPlay", "blocked qiyou ad script url=" + request.getUrl());
                     return mEmpty;
                 }
+                // v53 奇优：/static/jquery.js 是底部横幅的 WebSocket 通道（解析阶段同步开 WS，早于 CLEAN_JS 注入；
+                // WS 握手不走 shouldInterceptRequest，只能拦加载器本身）。完整路径匹配：只拦 path 恰好是
+                // /static/jquery.js 的请求；页面真 jQuery 走 CDN（path 不是这条），不误伤。只在奇优站内拦。
+                if (isQiyouSite() && "/static/jquery.js".equals(request.getUrl().getPath())) {
+                    if (mBlockedHosts.add(host)) DebugLogStore.add("WebPlay", "blocked qiyou static jquery url=" + request.getUrl());
+                    return mEmpty;
+                }
                 // 底部广告轮询脚本（如 Mirages 主题 bottom_ad_poll.js）：只拉广告 feed，不承载正片，直接拦。
                 String path = request.getUrl().getPath();
                 if (path != null && path.toLowerCase(Locale.US).contains("ad_poll")) {
@@ -2151,4 +2158,5 @@ public class WebPlayActivity extends BaseActivity implements EpisodeAdapter.OnCl
         super.onDestroy();
     }
 }
+
 
