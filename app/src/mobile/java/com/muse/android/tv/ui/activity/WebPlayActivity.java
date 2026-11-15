@@ -1505,37 +1505,20 @@ public class WebPlayActivity extends BaseActivity implements EpisodeAdapter.OnCl
         setting.setSupportMultipleWindows(false);
         setting.setJavaScriptCanOpenWindowsAutomatically(false);
         setting.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
-        setting.setUserAgentString(Setting.getUa());
-        // DIAG 临时（v48 MissAV 验证诊断，验收后撤掉）：记实际发出的 UA 与 System WebView 版本。
-        DebugLogStore.add("WebPlay", "diag ua=" + setting.getUserAgentString());
-        String diagWvVer = "unknown";
-        try {
-            android.content.pm.PackageInfo diagPkg = WebView.getCurrentWebViewPackage();
-            if (diagPkg != null) diagWvVer = diagPkg.versionName;
-        } catch (Throwable ignored) {
+        String ua = Setting.getUa();
+        if (TextUtils.isEmpty(ua)) {
+            // v49 MissAV 验证修法：偏好为空时默认 WebView UA 含 "; wv" 与 "Version/4.0" 标记，CF 认出是 WebView 不给 cf_clearance；去掉两标记，改发完整 Chrome 移动版 UA。
+            try {
+                ua = WebSettings.getDefaultUserAgent(this);
+            } catch (Throwable ignored) {
+            }
+            if (TextUtils.isEmpty(ua)) ua = setting.getUserAgentString();
+            if (!TextUtils.isEmpty(ua)) ua = ua.replace("; wv", "").replace("Version/4.0 ", "").replace("Version/4.0", "");
         }
-        DebugLogStore.add("WebPlay", "diag webview=" + diagWvVer);
+        if (!TextUtils.isEmpty(ua)) setting.setUserAgentString(ua);
         mBinding.web.setWebViewClient(webViewClient());
         mChromeClient = webChromeClient();
         mBinding.web.setWebChromeClient(mChromeClient);
-    }
-
-    // DIAG 临时（v48 MissAV 验证诊断，验收后撤掉）：取某域 Cookie 的名字列表（只记名，不记值）。
-    private String diagCookieNames(String url) {
-        try {
-            String cookies = CookieManager.getInstance().getCookie(url);
-            if (TextUtils.isEmpty(cookies)) return "[]";
-            List<String> names = new ArrayList<>();
-            for (String part : cookies.split(";")) {
-                String name = part.trim();
-                int eq = name.indexOf('=');
-                if (eq > 0) name = name.substring(0, eq);
-                if (!TextUtils.isEmpty(name)) names.add(name);
-            }
-            return names.toString();
-        } catch (Throwable ignored) {
-            return "[]";
-        }
     }
 
     private WebViewClient webViewClient() {
@@ -1705,11 +1688,6 @@ public class WebPlayActivity extends BaseActivity implements EpisodeAdapter.OnCl
             public void onPageFinished(WebView view, String url) {
                 super.onPageFinished(view, url);
                 if (url == null || url.equals("about:blank")) return;
-                // DIAG 临时（v48 MissAV 验证诊断，验收后撤掉）：只在 missav.ai 页面落地时记 Cookie 名（只记名，不记值），看 cf_clearance 有没有被设、有没有存住。
-                String diagHost = Uri.parse(url).getHost();
-                if (diagHost != null && diagHost.contains("missav.ai")) {
-                    DebugLogStore.add("WebPlay", "diag cookies missav.ai=" + diagCookieNames("https://missav.ai") + " challenges.cloudflare.com=" + diagCookieNames("https://challenges.cloudflare.com"));
-                }
                 // v93：页面落地，跳转链路结束（再有跨站跳转就是新的，不再跟进）。
                 mJumpAnchorHost = null;
                 mJumpRelayHost = null;
