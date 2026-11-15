@@ -67,6 +67,7 @@ public class Func implements Diffable<Func> {
         else if (resId == R.string.home_history_short) this.drawable = R.drawable.ic_home_history;
         else if (resId == R.string.home_search) this.drawable = R.drawable.ic_home_search;
         else if (resId == R.string.shelf_title) this.drawable = R.drawable.ic_action_bookshelf;
+        else if (resId == R.string.nav_browser) this.drawable = R.drawable.ic_nav_browser;
         else if (resId == R.string.home_setting) this.drawable = R.drawable.ic_home_setting;
     }
 
@@ -87,3 +88,4 @@ public class Func implements Diffable<Func> {
         return equals(other);
     }
 }
+

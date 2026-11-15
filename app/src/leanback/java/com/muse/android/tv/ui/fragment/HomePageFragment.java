@@ -1,6 +1,7 @@
 package com.muse.android.tv.ui.fragment;
 
 import android.annotation.SuppressLint;
+import android.text.TextUtils;
 import android.content.Intent;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -42,6 +43,7 @@ import com.muse.android.tv.ui.activity.PushActivity;
 import com.muse.android.tv.ui.activity.SearchActivity;
 import com.muse.android.tv.ui.activity.SettingActivity;
 import com.muse.android.tv.ui.activity.VideoActivity;
+import com.muse.android.tv.ui.activity.WebPlayActivity;
 import com.muse.android.tv.ui.activity.VodActivity;
 import com.muse.android.tv.ui.adapter.BaseDiffCallback;
 import com.muse.android.tv.ui.base.BaseFragment;
@@ -52,6 +54,7 @@ import com.muse.android.tv.ui.presenter.HeaderPresenter;
 import com.muse.android.tv.ui.presenter.HistoryPresenter;
 import com.muse.android.tv.ui.presenter.ProgressPresenter;
 import com.muse.android.tv.ui.presenter.VodPresenter;
+import com.muse.android.tv.utils.Notify;
 import com.muse.android.tv.utils.ResUtil;
 import com.github.catvod.utils.Prefers;
 import com.google.common.collect.Lists;
@@ -162,6 +165,15 @@ public class HomePageFragment extends BaseFragment implements VodPresenter.OnCli
         for (Button button : Button.getButtons()) {
             if (!hasLiveUrl && button.getResId() == R.string.home_live) continue;
             items.add(Func.create(button.getResId()));
+        }
+        // 浏览器入口：只在当前站能推出主页时亮，紧跟书架项后（首页功能行里小说边上）。
+        Site home = getHome();
+        if (home != null && !TextUtils.isEmpty(VideoActivity.siteHomePageUrl(home))) {
+            Func browser = Func.create(R.string.nav_browser);
+            int shelf = -1;
+            for (int i = 0; i < items.size(); i++) if (items.get(i).getResId() == R.string.shelf_title) shelf = i;
+            if (shelf >= 0) items.add(shelf + 1, browser);
+            else items.add(browser);
         }
         if (items.size() > 1) {
             items.get(0).setNextFocusLeft(items.get(items.size() - 1).getId());
@@ -300,6 +312,7 @@ public class HomePageFragment extends BaseFragment implements VodPresenter.OnCli
         else if (item.getResId() == R.string.home_history_short) startActivity(new Intent(requireActivity(), HistoryActivity.class));
         else if (item.getResId() == R.string.home_keep) KeepActivity.start(requireActivity());
         else if (item.getResId() == R.string.shelf_title) BookshelfActivity.start(requireActivity());
+        else if (item.getResId() == R.string.nav_browser) openBrowser();
         else if (item.getResId() == R.string.home_push) PushActivity.start(requireActivity());
         else if (item.getResId() == R.string.home_search) SearchActivity.start(requireActivity());
         else if (item.getResId() == R.string.home_setting) SettingActivity.start(requireActivity());
@@ -308,6 +321,17 @@ public class HomePageFragment extends BaseFragment implements VodPresenter.OnCli
                 VodActivity.start(requireActivity(), getHome().getKey(), ((HomeActivity) getActivity()).getHomeResult());
             }
         }
+    }
+
+    /** 进当前站点的主页（网页播放那套主页推导）；推不出就提示，不进空白页（与手机版 HomeActivity.openBrowser 同逻辑）。 */
+    private void openBrowser() {
+        Site site = getHome();
+        String url = site == null ? null : VideoActivity.siteHomePageUrl(site);
+        if (TextUtils.isEmpty(url)) {
+            Notify.show(R.string.nav_browser_empty);
+            return;
+        }
+        WebPlayActivity.start(requireActivity(), site.getName(), url, null, null, null, 0, site.getKey(), "", site.getClick(), null);
     }
 
     @Override
@@ -354,3 +378,4 @@ public class HomePageFragment extends BaseFragment implements VodPresenter.OnCli
         return true;
     }
 }
+

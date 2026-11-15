@@ -161,6 +161,7 @@ public class HomeActivity extends BaseActivity implements NavigationBarView.OnIt
         mBinding.navigation.getMenu().findItem(R.id.vod).setVisible(true);
         mBinding.navigation.getMenu().findItem(R.id.setting).setVisible(true);
         mBinding.navigation.getMenu().findItem(R.id.live).setVisible(LiveConfig.hasUrl());
+        mBinding.navigation.getMenu().findItem(R.id.bookshelf).setVisible(true);
         refreshBrowserItem();
     }
 
@@ -180,6 +181,11 @@ public class HomeActivity extends BaseActivity implements NavigationBarView.OnIt
             return false;
         }
         WebPlayActivity.start(this, site.getName(), url, null, null, null, 0, site.getKey(), "", site.getClick(), null);
+        return false;
+    }
+
+    private boolean openBookshelf() {
+        BookshelfActivity.start(this);
         return false;
     }
 
@@ -235,6 +241,7 @@ public class HomeActivity extends BaseActivity implements NavigationBarView.OnIt
         if (item.getItemId() == R.id.vod) return mManager.change(0);
         if (item.getItemId() == R.id.live) return openLive();
         if (item.getItemId() == R.id.browser) return openBrowser();
+        if (item.getItemId() == R.id.bookshelf) return openBookshelf();
         return false;
     }
 

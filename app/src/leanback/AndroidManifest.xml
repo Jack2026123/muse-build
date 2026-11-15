@@ -130,6 +130,13 @@
             android:screenOrientation="sensorLandscape" />
 
         <activity
+            android:name=".ui.activity.WebPlayActivity"
+            android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation"
+            android:exported="false"
+            android:label="网页播放"
+            android:screenOrientation="landscape" />
+
+        <activity
             android:name=".ui.activity.KeepActivity"
             android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation"
             android:screenOrientation="sensorLandscape" />
@@ -207,3 +214,4 @@
 
     </application>
 </manifest>
+
