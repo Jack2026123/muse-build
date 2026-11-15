@@ -1719,6 +1719,9 @@ public class WebPlayActivity extends BaseActivity implements EpisodeAdapter.OnCl
                 String diagHost = Uri.parse(url).getHost();
                 if (diagHost != null && diagHost.contains("missav.ai")) {
                     DebugLogStore.add("WebPlay", "diag cookies missav.ai=" + diagCookieNames("https://missav.ai") + " challenges.cloudflare.com=" + diagCookieNames("https://challenges.cloudflare.com"));
+                    // DIAG 临时（v51 MissAV 验证 + 广告诊断，Liu 验收通过后撤掉）：记 JS 环境指纹（看 CF 除了 UA 还认什么）与广告容器结构（myavlive/mavrtracktor 容器在哪）。
+                    view.evaluateJavascript("(function(){try{return JSON.stringify({webdriver:navigator.webdriver,chrome:typeof window.chrome,plugins:navigator.plugins.length,languages:(navigator.languages||[]).join(','),cores:navigator.hardwareConcurrency,ua:navigator.userAgent});}catch(e){return 'error:'+e.message;}})()", jsenvVal -> DebugLogStore.add("WebPlay", "diag jsenv=" + jsenvVal));
+                    view.evaluateJavascript("(function(){try{var out=[];var fr=document.querySelectorAll('iframe');for(var i=0;i<fr.length&&i<5;i++){var p=fr[i].parentElement;out.push('iframe src='+(fr[i].src||'').slice(0,120)+' parent='+(p?p.tagName+'.'+(p.className||''):'none'));}var sels=document.querySelectorAll('[href*=\"myavlive\"],[src*=\"myavlive\"],[href*=\"mavrtracktor\"],[src*=\"mavrtracktor\"]');for(var j=0;j<sels.length&&j<5;j++){var e=sels[j];var pp=e.parentElement;out.push('el '+e.tagName+'.'+(e.className||'')+'#'+(e.id||'')+' parent='+(pp?pp.tagName+'.'+(pp.className||''):'none'));}return out.join(' | ')||'none';}catch(e){return 'error:'+e.message;}})()", adVal -> DebugLogStore.add("WebPlay", "diag ad=" + adVal));
                 }
                 // v93：页面落地，跳转链路结束（再有跨站跳转就是新的，不再跟进）。
                 mJumpAnchorHost = null;
