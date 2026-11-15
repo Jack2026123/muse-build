@@ -27,6 +27,13 @@ public class UrlUtil {
         return scheme == null ? "" : scheme.toLowerCase().trim();
     }
 
+    /** 是不是能进 WebView 的网页地址：只认 http/https。 */
+    public static boolean isWebUrl(String url) {
+        if (url == null) return false;
+        String scheme = scheme(url);
+        return "http".equals(scheme) || "https".equals(scheme);
+    }
+
     public static String host(String url) {
         return url == null ? "" : host(uri(url));
     }
