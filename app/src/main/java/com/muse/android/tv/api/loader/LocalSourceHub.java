@@ -2122,7 +2122,17 @@ public class LocalSourceHub {
         boolean rootRelative = false;
         if (path.startsWith("file:")) {
             path = path.substring(5);
-            rootRelative = !path.startsWith("/") && !path.startsWith("//");
+            // v63：`file://<相对路径>`（双斜杠、非三斜杠）是相对外部存储根的脚本写法
+            // （如 file://123/cca.json → 123/cca.json），与 UrlUtil.convert / configRootDirs 一致；
+            // `file:///<绝对路径>`（三斜杠）才是绝对路径。旧判法在剥掉 "//" 之前就算 rootRelative，
+            // 把 file://123/cca.json 误判成绝对路径 /123/cca.json（根目录，不存在），网页源追加
+            // 找不到配置文件就报「当前没有加载配置」。
+            if (path.startsWith("//") && !path.startsWith("///")) {
+                path = path.substring(2);
+                rootRelative = true;
+            } else {
+                rootRelative = !path.startsWith("/");
+            }
         } else if (path.startsWith("http://") || path.startsWith("https://")) {
             int index = path.indexOf("/file/");
             if (index < 0) return paths;
