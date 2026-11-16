@@ -94,7 +94,7 @@ public class WebPlayActivity extends BaseActivity implements EpisodeAdapter.OnCl
      * onPageCommitVisible 起跑以减少广告闪现。观察器另监听 style 属性（先藏后显的弹窗），防抖 100ms；同一播放器内多余 video 与文档底部 in-flow 横幅另有专 rule；近乎全屏的定死图片覆盖层（同站图亦然）另有专 rule。
      */
     // v58 (P0): isChallenge 扩为整页挑战检测——标题含「请稍候/Just a moment」或 HTML 含 challenges.cloudflare.com/cf-challenge 时整页跳过 CLEAN_JS；
-    // div 循环加 isChallenge 守卫；isModal/isOpaqueModal/isBigOverlay 内部加 isChallenge 守卫。DIAG-CF-CHALLENGE 与 DIAG-CF-REFRESH 诊断保留。
+    // div 循环加 isChallenge 守卫；isModal/isOpaqueModal/isBigOverlay 内部加 isChallenge 守卫。
     private static final String[] CLEAN_JS_PARTS = {
         "(function(){if(window.__museWebClean)return;try{var __museCT=(document.title||'').toLowerCase();if(__museCT.in",
         "dexOf('请稍候')>=0||__museCT.indexOf('just a moment')>=0)return;var __museCH=document.documentElement.outerHTML.s",
@@ -1435,7 +1435,6 @@ public class WebPlayActivity extends BaseActivity implements EpisodeAdapter.OnCl
         initWebView();
         // v56：只在换站时清缓存——v105 的无条件 clearCache(true) 会把 CF 验证关联的缓存状态一起清掉，
         // 导致每次进站都像全新浏览器、反复验证。同站重进不再清缓存，验证状态得以保留。
-        // DIAG-CF-REFRESH (temporary, remove after Liu accepts)
         String openUrl = intent.getStringExtra("url");
         String openHost = "";
         if (!TextUtils.isEmpty(openUrl)) {
@@ -1444,10 +1443,8 @@ public class WebPlayActivity extends BaseActivity implements EpisodeAdapter.OnCl
         }
         String lastHost = Setting.getLastWebHost();
         if (!TextUtils.isEmpty(openHost) && openHost.equals(lastHost)) {
-            DebugLogStore.add("WebPlay", "v56 clearCache skipped, same site host=" + openHost);
         } else {
             mBinding.web.clearCache(true);
-            DebugLogStore.add("WebPlay", "v56 clearCache ran, openHost=" + openHost + " lastHost=" + lastHost);
             if (!TextUtils.isEmpty(openHost)) Setting.putLastWebHost(openHost);
         }
         updateNav();
@@ -1472,10 +1469,6 @@ public class WebPlayActivity extends BaseActivity implements EpisodeAdapter.OnCl
         });
         mBinding.refresh.setOnClickListener(view -> {
             showBars();
-            // DIAG-CF-REFRESH (temporary, remove after Liu accepts)
-            String curUrl = mBinding.web.getUrl();
-            String curCk = curUrl == null ? null : CookieManager.getInstance().getCookie(curUrl);
-            DebugLogStore.add("WebPlay", "v56 refresh click url=" + curUrl + " cf_clearance=" + (curCk != null && curCk.contains("cf_clearance")));
             mBinding.web.reload();
         });
         mBinding.flag.setOnClickListener(view -> showFlags());
@@ -1728,9 +1721,6 @@ public class WebPlayActivity extends BaseActivity implements EpisodeAdapter.OnCl
                 view.evaluateJavascript(CLEAN_JS, value -> view.setVisibility(View.VISIBLE));
                 // v56：把 Cookie 落盘——cf_clearance 只留在内存里时进程一死验证就丢；flush 后重进、刷新仍有效。
                 CookieManager.getInstance().flush();
-                // DIAG-CF-REFRESH (temporary, remove after Liu accepts)
-                String finCk = CookieManager.getInstance().getCookie(url);
-                DebugLogStore.add("WebPlay", "v56 onPageFinished flush, url=" + url + " cf_clearance=" + (finCk != null && finCk.contains("cf_clearance")));
                 // v100：空白页回滚——被拦的广告跳转有时会把当前页卸成空文档（标题空、无视频、无图），
                 // 点什么都没反应。检出空白就回滚到入口地址一次（mAnchorUrl），避免死在空白页。
                 // v56：首次检出空白不立即回滚——Nuxt 等 SPA 壳在 onPageFinished 时尚未水合，标题/正文/图
@@ -1739,47 +1729,12 @@ public class WebPlayActivity extends BaseActivity implements EpisodeAdapter.OnCl
                 view.evaluateJavascript(blankJs, blankVal -> {
                     String val = blankVal;
                     if (val != null && val.length() >= 2 && val.startsWith("\"") && val.endsWith("\"")) val = val.substring(1, val.length() - 1);
-                    // DIAG-CF-REFRESH (temporary, remove after Liu accepts)
-                    DebugLogStore.add("WebPlay", "v56 blank check url=" + url + " val=" + val + " recovered=" + mBlankRecovered);
-                    // DIAG-CF-CHALLENGE (temporary, remove after Liu accepts)
-                    // 极简页（图 <= 1 张）疑似 CF 验证页：记 URL、标题、CF 标记与 Cookie 名，
-                    // 确认验证类型与为何不发 cf_clearance。只读日志，不改导航/Cookie/缓存。
-                    int imgCount = -1;
-                    try {
-                        String[] parts = val.split(",");
-                        if (parts.length == 3) imgCount = Integer.parseInt(parts[2]);
-                    } catch (Exception ignored) {
-                    }
-                    if (imgCount >= 0 && imgCount <= 1) {
-                        String challengeJs = "(function(){try{var h=document.documentElement.outerHTML.slice(0,200000).toLowerCase();var r=[];r.push('cf='+(h.indexOf('cloudflare')>=0?1:0));r.push('turnstile='+(h.indexOf('turnstile')>=0?1:0));r.push('cf-challenge='+(h.indexOf('cf-challenge')>=0?1:0));r.push('challenges='+(h.indexOf('challenges.cloudflare.com')>=0?1:0));r.push('moment='+(h.indexOf('just a moment')>=0?1:0));r.push('human='+(h.indexOf('verify you are human')>=0?1:0));var fr=false;var fs=document.getElementsByTagName('iframe');for(var i=0;i<fs.length;i++){var s=(fs[i].src||'').toLowerCase();if(s.indexOf('cloudflare')>=0||s.indexOf('challenges')>=0){fr=true;break;}}r.push('cfframe='+(fr?1:0));return r.join(' ');}catch(e){return 'err';}})()";
-                        view.evaluateJavascript(challengeJs, markerVal -> {
-                            String markers = markerVal;
-                            if (markers != null && markers.length() >= 2 && markers.startsWith("\"") && markers.endsWith("\"")) markers = markers.substring(1, markers.length() - 1);
-                            // DIAG-CF-CHALLENGE (temporary, remove after Liu accepts)
-                            String ck = CookieManager.getInstance().getCookie(url);
-                            StringBuilder ckNames = new StringBuilder();
-                            if (ck != null) {
-                                for (String c : ck.split(";")) {
-                                    String n = c.trim();
-                                    int eq = n.indexOf('=');
-                                    if (eq > 0) n = n.substring(0, eq);
-                                    if (n.length() > 0) {
-                                        if (ckNames.length() > 0) ckNames.append(',');
-                                        ckNames.append(n);
-                                    }
-                                }
-                            }
-                            DebugLogStore.add("WebPlay", "v57 challenge url=" + url + " title=" + view.getTitle() + " markers=" + markers + " cookies=" + ckNames);
-                        });
-                    }
                     if (!"1,1,0".equals(val)) return;
                     if (mBlankRecovered || TextUtils.isEmpty(mAnchorUrl) || mAnchorUrl.equals(url)) return;
                     if (mBlankRecheck != null) view.removeCallbacks(mBlankRecheck);
                     mBlankRecheck = () -> view.evaluateJavascript(blankJs, reVal -> {
                         String re = reVal;
                         if (re != null && re.length() >= 2 && re.startsWith("\"") && re.endsWith("\"")) re = re.substring(1, re.length() - 1);
-                        // DIAG-CF-REFRESH (temporary, remove after Liu accepts)
-                        DebugLogStore.add("WebPlay", "v56 blank recheck url=" + url + " val=" + re + " recovered=" + mBlankRecovered);
                         if (!"1,1,0".equals(re)) return;
                         if (mBlankRecovered || TextUtils.isEmpty(mAnchorUrl) || mAnchorUrl.equals(url)) return;
                         mBlankRecovered = true;
