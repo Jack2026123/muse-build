@@ -107,17 +107,13 @@ public class LocalSourceHub {
 
     /**
      * r25-②：{@code file://自己整理 (1)/PQ类/a.json} 这种「脚本写法」的展开基准 —— 路径里那一段是
-     * <b>相对外部存储根</b>的（App 载入配置本身也用这种写法：{@code file://自己整理 (1)/昏黄本地源.json}），
+     * <b>相对外部存储根</b>的（App 载入配置本身也用这种写法：{@code file://自己整理 (1)/Muse本地源.json}），
      * 解析成绝对路径时必须补上存储根，否则整批本地源都会被判成「外地源」而被剔除。
      */
     private static final String[] EXTERNAL_BASES = {"/storage/emulated/0", "/sdcard", "/storage/self/primary"};
 
     /** 生成文件名（默认放在第一个启用的扫描目录里）。r29-⑤：名字可自定义，默认 Muse本地源.json。 */
     public static final String DEFAULT_OUT_NAME = "Muse本地源";
-    /** r29 之前写死的产物名：仍按「本壳产物」识别，避免老用户已有文件被当成自写源。 */
-    /** Vesper 时代的默认产物名：仍按「本壳产物」识别，避免已用 Vesper 的老用户文件被误判成自写源。 */
-    public static final String LEGACY_VESPER_OUT_NAME = "Vesper自动本地源";
-    public static final String LEGACY_OUT_NAME = "昏黄本地源.json";
     /** 资产里的默认常量（由用户脚本导出）。 */
     private static final String ASSET = "local_source_defaults.json";
 
@@ -470,14 +466,12 @@ public class LocalSourceHub {
     /**
      * r29-⑤：这个文件名是不是「本壳产物」。
      *
-     * <p>既认当前自定义名，也认 r29 之前的固定名 {@link #LEGACY_OUT_NAME}，
-     * 保证老用户已有的 {@code 昏黄本地源.json} 不会被误判成「用户自写源」而被排除在自动回写之外。
+     * <p>只认当前自定义名（默认 {@code Muse本地源.json}）；老名字不再认——
+     * 用老名字文件的用户，它会被当成普通手写配置，不再享受产物待遇。
      */
     private static boolean isProductName(String name, JsonObject data) {
         if (TextUtils.isEmpty(name)) return false;
-        String base = name;
-        if (base.toLowerCase(Locale.ROOT).endsWith(".json")) base = base.substring(0, base.length() - 5);
-        return name.equalsIgnoreCase(outName(data)) || name.equalsIgnoreCase(LEGACY_OUT_NAME) || base.equalsIgnoreCase(LEGACY_VESPER_OUT_NAME);
+        return name.equalsIgnoreCase(outName(data));
     }
 
 
@@ -922,7 +916,7 @@ public class LocalSourceHub {
         if (config == null || !isEnabled()) return;
         if (enabledScanDirs(settings()).isEmpty()) return;
         // r28-① 两套规则彻底剥离：当前加载的是「你自己编写的本地源配置」（本地文件型、且不是本壳
-        // 产物「昏黄本地源.json」，例如 file://自用2026plus/家享plus.json）时，自动扫描生成的源
+        // 产物，例如 file://自用2026plus/家享plus.json）时，自动扫描生成的源
         // 一律不注入 —— 你在这套规则下只看到自己写的源与自己的分类，自动扫描那套不再掺进来。
         // （实测：以前加载自己的配置时被追加 1103 条扫描源，源列表里全是自动生成的分类。）
         // 自动扫描那套只在加载本壳产物或远程订阅配置时生效，两套互不干扰。
@@ -1255,7 +1249,7 @@ public class LocalSourceHub {
                 long now = System.currentTimeMillis();
                 // r20-⑭：force（删源后的回写）不受「距上次写入不足 AUTO_WRITE_INTERVAL」限制 ——
                 // 删源往往紧跟在一次加载触发的自动回写之后，旧实现会把这次回写静默吞掉，
-                // 用户看到的就是「文件删了、昏黄本地源.json 里的条目还在」。
+                // 用户看到的就是「文件删了、产物配置里的条目还在」。
                 if (!force && now - autoWriteAt < AUTO_WRITE_INTERVAL) return;
                 autoWriteAt = now;
                 autoWriteHash = text;
@@ -1850,7 +1844,7 @@ public class LocalSourceHub {
      * </ul>
      *
      * <p>远程订阅源（http/https）、引擎名（{@code csp_XXX}）、内置源都不算本地源 → false，
-     * 保持原来「没有本地源文件」的提示不变。当前配置本身就是本壳产物（{@code 昏黄本地源.json}）时，
+     * 保持原来「没有本地源文件」的提示不变。当前配置本身就是本壳产物时，
      * 「随行目录」不参与判定 —— 否则产物所在的扫描目录会把整批扫描源误判成自写源。
      *
      * @param api      站点 api（可能只是引擎名）
@@ -1896,7 +1890,7 @@ public class LocalSourceHub {
      * 就一律不写，免得把手写 json 覆盖成本壳产物；② 搬家 / 删源后回填其它 json 的指向时
      * （{@link #rewriteJsonPaths}）—— 你手写的 json 一个字段都不改。
      *
-     * <p>判定：文件名就是本壳产物名（{@code 昏黄本地源.json}）→ 不是你的；是当前正在加载的那份配置本身
+     * <p>判定：文件名就是本壳产物名 → 不是你的；是当前正在加载的那份配置本身
      * → 是你的；位于当前配置的随行目录里 → 是你的。
      */
     public static boolean isUserOwnedConfig(String path) {
@@ -1932,7 +1926,7 @@ public class LocalSourceHub {
         return configRootDirs(currentConfigUrl);
     }
 
-    /** r26-②：配置地址是不是本壳产物（{@code 昏黄本地源.json}）。 */
+    /** r26-②：配置地址是不是本壳产物。 */
     private static boolean isAppProductConfig(String url) {
         String name = url == null ? "" : url.trim();
         int cut = Math.max(name.lastIndexOf('/'), name.lastIndexOf('\\'));
@@ -2208,11 +2202,110 @@ public class LocalSourceHub {
         try {
             if (!file.delete()) return -1;
             DebugLogStore.add(TAG, "已删除本地源文件：" + file.getAbsolutePath() + "（随后回写 json）");
+            pruneDanglingEntriesFromUserConfig();
             refreshOutput();
             return 1;
         } catch (Throwable e) {
             DebugLogStore.add(TAG, "删除本地源文件失败：" + e);
             return -1;
+        }
+    }
+
+    /**
+     * v67-cleanup：删本地源文件成功后，顺手摘掉当前手写配置里的悬空条目。
+     *
+     * <p>只在删文件成功后触发；只碰当前加载的手写配置文件（产物配置由 {@link #refreshOutput()}
+     * 整份重建，网络配置没有本地文件可写）；只摘 api/ext/homePage/url 指向已不存在文件的条目，
+     * 其他条目一行不动；文本级摘除，不整份重写。写回失败只记日志，不影响删除本身的结果。
+     */
+    private static void pruneDanglingEntriesFromUserConfig() {
+        try {
+            File config = currentConfigFile();
+            if (config == null) return;
+            if (!isUserOwnedConfig(config.getAbsolutePath())) return;
+            String text = readTextFile(config);
+            if (TextUtils.isEmpty(text)) return;
+            try {
+                JsonParser.parseString(text).getAsJsonObject();
+            } catch (Throwable e) {
+                return;
+            }
+            String updated = text;
+            int removed = 0;
+            for (String key : new String[]{"sites", "lives"}) {
+                while (true) {
+                    int[] span = findTopArraySpan(updated, key);
+                    if (span == null) break;
+                    List<int[]> entries = findEntrySpans(updated, span[0], span[1]);
+                    if (entries == null || entries.isEmpty()) break;
+                    int target = -1;
+                    for (int i = 0; i < entries.size(); i++) {
+                        JsonObject entry = parseEntryObject(updated, entries.get(i));
+                        if (entry != null && isDanglingEntry(entry, config)) {
+                            target = i;
+                            break;
+                        }
+                    }
+                    if (target < 0) break;
+                    updated = removeEntryAt(updated, span, entries, target);
+                    removed++;
+                }
+            }
+            if (removed == 0) return;
+            try {
+                JsonParser.parseString(updated).getAsJsonObject();
+            } catch (Throwable e) {
+                DebugLogStore.add(TAG, "悬空条目清理后校验失败，不落盘：" + e);
+                return;
+            }
+            int r = writeTextFileCode(config, updated);
+            DebugLogStore.add(TAG, "手写配置悬空条目已清理：" + removed + " 条（" + config.getAbsolutePath() + "），写盘=" + r);
+        } catch (Throwable e) {
+            DebugLogStore.add(TAG, "悬空条目清理失败（不影响删除结果）：" + e);
+        }
+    }
+
+    /**
+     * v67-cleanup：手写配置里的这条是不是悬空（指向本地文件、但文件已不存在）。
+     *
+     * <p>远程/引擎/内置源（没有本地文件路径）不算悬空；网页源的 homePage 是网址，不算文件；
+     * 任一候选路径能解析到已存在的文件就不算悬空。相对路径先试手写配置所在目录，再试生成/扫描目录。
+     */
+    private static boolean isDanglingEntry(JsonObject entry, File configFile) {
+        if (entry == null) return false;
+        if (isWebSourceEntry(entry)) return false;
+        String api = primitiveString(entry, "api");
+        String ext = primitiveString(entry, "ext");
+        String homePage = primitiveString(entry, "homePage");
+        List<String> paths = sourcePaths(api, ext, homePage);
+        for (String p : parseSourcePath(primitiveString(entry, "url"))) if (!paths.contains(p)) paths.add(p);
+        if (paths.isEmpty()) return false;
+        for (String candidate : paths) {
+            if (TextUtils.isEmpty(candidate)) continue;
+            File f = new File(candidate);
+            if (f.isAbsolute()) {
+                if (f.isFile()) return false;
+            } else {
+                if (configFile != null && configFile.getParentFile() != null) {
+                    if (new File(configFile.getParentFile(), candidate).isFile()) return false;
+                }
+                if (resolveSource(candidate) != null) return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * v67-cleanup：从数组文本里切掉下标为 target 的一条目（逗号处理与 deleteWebSource 一致：
+     * 唯一条目则清空数组；中间条目连后逗号切；末条连前逗号切）。
+     */
+    private static String removeEntryAt(String text, int[] span, List<int[]> entries, int target) {
+        if (entries.size() == 1) {
+            return text.substring(0, span[0] + 1) + text.substring(span[1]);
+        } else if (target + 1 < entries.size()) {
+            return text.substring(0, entries.get(target)[0]) + text.substring(entries.get(target + 1)[0]);
+        } else {
+            return text.substring(0, entries.get(target - 1)[1] + 1) + text.substring(entries.get(target)[1] + 1);
         }
     }
 
@@ -3298,6 +3391,11 @@ public class LocalSourceHub {
 
     /** v61：定位顶层 sites 数组的 [ 与 ] 下标；找不到返回 null（字符串内的括号不计）。 */
     private static int[] findSitesArraySpan(String text) {
+        return findTopArraySpan(text, "sites");
+    }
+
+    /** v67-cleanup：顶层 key 对应的数组 [左中括号, 右中括号] 下标；找不到返回 null。 */
+    private static int[] findTopArraySpan(String text, String key) {
         int len = text.length();
         int depth = 0;
         int i = 0;
@@ -3307,7 +3405,7 @@ public class LocalSourceHub {
                 int end = skipString(text, i);
                 if (end < 0) return null;
                 String token = text.substring(i + 1, end);
-                if (depth == 1 && "sites".equals(token)) {
+                if (depth == 1 && key.equals(token)) {
                     int j = end + 1;
                     while (j < len && Character.isWhitespace(text.charAt(j))) j++;
                     if (j < len && text.charAt(j) == ':') {
