@@ -68,8 +68,8 @@ public class WebSourceDialog {
         new Thread(() -> {
             final int result = LocalSourceHub.appendWebSource(name, url);
             App.post(() -> {
-                if (result == LocalSourceHub.WEB_OK) {
-                    Notify.show(context.getString(R.string.site_web_source_done, name));
+                if (result == LocalSourceHub.WEB_OK || result == LocalSourceHub.WEB_CREATED) {
+                    Notify.show(context.getString(result == LocalSourceHub.WEB_CREATED ? R.string.site_web_source_created : R.string.site_web_source_done, name));
                     // 写完重载配置：新站立刻进切站列表，不用手动刷新
                     VodConfig.get().init().load(new Callback() {
                         @Override
