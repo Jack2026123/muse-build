@@ -255,7 +255,8 @@ public class SiteDialog extends BaseAlertDialog implements SiteAdapter.OnClickLi
             return;
         }
         // 只对本地源文件生效；远程源长按不进勾选模式（与手机版同一口径）。
-        if (LocalSourceHub.sourceFilePathOf(item.getApi(), item.getExt(), null) == null) return;
+        // v33：网页源没有源文件，但允许进勾选模式走批量删除（deleteSelected 里走 deleteWebSource 摘条目）。
+        if (LocalSourceHub.sourceFilePathOf(item.getApi(), item.getExt(), null) == null && !item.isWebSource()) return;
         ops = true;
         binding.selectBar.setVisibility(View.VISIBLE);
         adapter.enterOps(item);
@@ -689,7 +690,7 @@ public class SiteDialog extends BaseAlertDialog implements SiteAdapter.OnClickLi
             .show();
     }
 
-    /** 批量删除源文件：删完同步回写并重载配置，条目立刻从列表消失。 */
+    /** 批量删除：本地源删文件，网页源摘配置条目；删完同步回写并重载配置，条目立刻从列表消失。 */
     private void deleteSelected(List<Site> targets) {
         final List<Site> snapshot = new ArrayList<>(targets);
         exitOps();
@@ -699,6 +700,13 @@ public class SiteDialog extends BaseAlertDialog implements SiteAdapter.OnClickLi
             try {
                 LocalSourceHub.beginBatch();
                 for (Site site : snapshot) {
+                    // v33：网页源没有源文件，走文本级删除摘配置条目（与手机版 v67 同口径）；
+                    // WEB_NOT_FOUND 也算已删（条目已不在文件里，重载后即从列表消失）。
+                    if (site.isWebSource()) {
+                        int webResult = LocalSourceHub.deleteWebSource(site.getKey());
+                        if (webResult == LocalSourceHub.WEB_OK || webResult == LocalSourceHub.WEB_NOT_FOUND) removed++;
+                        continue;
+                    }
                     int result = LocalSourceHub.deleteSiteFile(site.getApi(), site.getExt(), null);
                     if (result > 0) removed++;
                     else if (result == LocalSourceHub.BLOCK_SELF_AUTHORED) selfName = site.getName();
