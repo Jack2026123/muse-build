@@ -1733,6 +1733,37 @@ public class WebPlayActivity extends BaseActivity implements EpisodeAdapter.OnCl
                     if (val != null && val.length() >= 2 && val.startsWith("\"") && val.endsWith("\"")) val = val.substring(1, val.length() - 1);
                     // DIAG-CF-REFRESH (temporary, remove after Liu accepts)
                     DebugLogStore.add("WebPlay", "v56 blank check url=" + url + " val=" + val + " recovered=" + mBlankRecovered);
+                    // DIAG-CF-CHALLENGE (temporary, remove after Liu accepts)
+                    // 极简页（图 <= 1 张）疑似 CF 验证页：记 URL、标题、CF 标记与 Cookie 名，
+                    // 确认验证类型与为何不发 cf_clearance。只读日志，不改导航/Cookie/缓存。
+                    int imgCount = -1;
+                    try {
+                        String[] parts = val.split(",");
+                        if (parts.length == 3) imgCount = Integer.parseInt(parts[2]);
+                    } catch (Exception ignored) {
+                    }
+                    if (imgCount >= 0 && imgCount <= 1) {
+                        String challengeJs = "(function(){try{var h=document.documentElement.outerHTML.slice(0,200000).toLowerCase();var r=[];r.push('cf='+(h.indexOf('cloudflare')>=0?1:0));r.push('turnstile='+(h.indexOf('turnstile')>=0?1:0));r.push('cf-challenge='+(h.indexOf('cf-challenge')>=0?1:0));r.push('challenges='+(h.indexOf('challenges.cloudflare.com')>=0?1:0));r.push('moment='+(h.indexOf('just a moment')>=0?1:0));r.push('human='+(h.indexOf('verify you are human')>=0?1:0));var fr=false;var fs=document.getElementsByTagName('iframe');for(var i=0;i<fs.length;i++){var s=(fs[i].src||'').toLowerCase();if(s.indexOf('cloudflare')>=0||s.indexOf('challenges')>=0){fr=true;break;}}r.push('cfframe='+(fr?1:0));return r.join(' ');}catch(e){return 'err';}})()";
+                        view.evaluateJavascript(challengeJs, markerVal -> {
+                            String markers = markerVal;
+                            if (markers != null && markers.length() >= 2 && markers.startsWith("\"") && markers.endsWith("\"")) markers = markers.substring(1, markers.length() - 1);
+                            // DIAG-CF-CHALLENGE (temporary, remove after Liu accepts)
+                            String ck = CookieManager.getInstance().getCookie(url);
+                            StringBuilder ckNames = new StringBuilder();
+                            if (ck != null) {
+                                for (String c : ck.split(";")) {
+                                    String n = c.trim();
+                                    int eq = n.indexOf('=');
+                                    if (eq > 0) n = n.substring(0, eq);
+                                    if (n.length() > 0) {
+                                        if (ckNames.length() > 0) ckNames.append(',');
+                                        ckNames.append(n);
+                                    }
+                                }
+                            }
+                            DebugLogStore.add("WebPlay", "v57 challenge url=" + url + " title=" + view.getTitle() + " markers=" + markers + " cookies=" + ckNames);
+                        });
+                    }
                     if (!"1,1,0".equals(val)) return;
                     if (mBlankRecovered || TextUtils.isEmpty(mAnchorUrl) || mAnchorUrl.equals(url)) return;
                     if (mBlankRecheck != null) view.removeCallbacks(mBlankRecheck);
@@ -2156,6 +2187,7 @@ public class WebPlayActivity extends BaseActivity implements EpisodeAdapter.OnCl
         super.onDestroy();
     }
 }
+
 
 
 
