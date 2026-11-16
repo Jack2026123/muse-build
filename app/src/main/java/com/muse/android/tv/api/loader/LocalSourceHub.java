@@ -2894,6 +2894,8 @@ public class LocalSourceHub {
     public static final int WEB_WRITE_FAIL = -6;
     /** v67：网页源追加：写盘被系统拒绝（无存储权限，与写盘失败分开）。 */
     public static final int WEB_NO_PERMISSION = -7;
+    /** v67：网页源删除/改名：当前配置里没有这条网页源（可能已被删）。 */
+    public static final int WEB_NOT_FOUND = -8;
     /** v66：网页源追加：新建了网页源配置文件（成功，文件为新建）。 */
     public static final int WEB_CREATED = 2;
     /** v66：无配置时新建的网页源配置文件名（系统 Download 目录）。 */
@@ -2953,6 +2955,197 @@ public class LocalSourceHub {
         if (writeResult != WEB_OK) return writeResult;
         DebugLogStore.add(TAG, "网页源已追加：" + webName + " -> " + webUrl + "（" + config.getAbsolutePath() + "）");
         return WEB_OK;
+    }
+
+    /**
+     * v67 网页源：从当前配置文件的 sites 数组里删掉一条网页源（按 key 定位）。
+     *
+     * <p>与 {@link #appendWebSource} 同一条文本级路线：不全盘重写，只切掉目标条目
+     * （中间条目连同它后面的逗号一起切，末条切掉它前面的逗号，唯一条目清空数组），
+     * 原文件其它格式原样保留；写前重解析一次校验 JSON 合法，非法就不落盘。
+     * 只删网页源条目（key/name/主页url 三项、无 api/ext），普通源条目即使同名也不动。
+     * 删的是当前正在用的站时，由调用方重载配置，home 自动落到第一条站（默认站）。
+     *
+     * @return {@link #WEB_OK} 成功；{@link #WEB_NOT_FOUND} 当前配置里没有这条网页源；
+     *         {@link #WEB_NETWORK} 当前配置是网络源；{@link #WEB_NO_CONFIG} 当前没有加载配置 /
+     *         找不到本地配置文件；{@link #WEB_NO_SITES} 配置里没有 sites 数组 / 解析失败；
+     *         {@link #WEB_INVALID} key 为空；{@link #WEB_NO_PERMISSION} 无权限；
+     *         {@link #WEB_WRITE_FAIL} 其它写盘失败
+     */
+    public static int deleteWebSource(String key) {
+        if (key == null || key.trim().isEmpty()) return WEB_INVALID;
+        String cfg = getCurrentConfigUrl();
+        if (cfg == null || cfg.trim().isEmpty()) return WEB_NO_CONFIG;
+        if (isNetworkConfigUrl(cfg)) return WEB_NETWORK;
+        File config = currentConfigFile();
+        if (config == null) return WEB_NO_CONFIG;
+        String text = readTextFile(config);
+        if (text == null || text.isEmpty()) return WEB_NO_SITES;
+        JsonObject root;
+        try {
+            root = JsonParser.parseString(text).getAsJsonObject();
+        } catch (Throwable e) {
+            return WEB_NO_SITES;
+        }
+        if (root == null || !root.has("sites") || !root.get("sites").isJsonArray()) return WEB_NO_SITES;
+        int[] span = findSitesArraySpan(text);
+        if (span == null) return WEB_NO_SITES;
+        List<int[]> entries = findEntrySpans(text, span[0], span[1]);
+        if (entries == null) return WEB_NO_SITES;
+        int target = -1;
+        for (int i = 0; i < entries.size(); i++) {
+            JsonObject entry = parseEntryObject(text, entries.get(i));
+            if (entry != null && isWebSourceEntry(entry) && key.equals(primitiveString(entry, "key"))) {
+                target = i;
+                break;
+            }
+        }
+        if (target < 0) return WEB_NOT_FOUND;
+        String updated;
+        if (entries.size() == 1) {
+            // 删到只剩 0 条：数组清空，剩 {"sites": []}，合法
+            updated = text.substring(0, span[0] + 1) + text.substring(span[1]);
+        } else if (target + 1 < entries.size()) {
+            // 中间条目：连同它后面的逗号与分隔空白一起切，下一条顶上来
+            updated = text.substring(0, entries.get(target)[0]) + text.substring(entries.get(target + 1)[0]);
+        } else {
+            // 末条：连同它前面的逗号一起切，上一条变成末条（不带尾逗号）
+            updated = text.substring(0, entries.get(target - 1)[1] + 1) + text.substring(entries.get(target)[1] + 1);
+        }
+        try {
+            JsonParser.parseString(updated).getAsJsonObject();
+        } catch (Throwable e) {
+            DebugLogStore.add(TAG, "网页源删除后校验失败，不落盘：" + e);
+            return WEB_NO_SITES;
+        }
+        int writeResult = writeTextFileCode(config, updated);
+        if (writeResult != WEB_OK) return writeResult;
+        DebugLogStore.add(TAG, "网页源已删除：" + key + "（" + config.getAbsolutePath() + "）");
+        return WEB_OK;
+    }
+
+    /**
+     * v67 网页源：改一条网页源的名字与网址（按旧 key 定位，文本级原地换三个字段值）。
+     *
+     * <p>改名即改 key（与 v61 规则一致：key 即名）。新 key 查重看全表（除自己以外任意条目的
+     * key 都算冲突，口径与追加一致），冲突返回 {@link #WEB_EXISTS}；名字留空时取新网址域名，
+     * 与追加一致。只改网页源条目，普通源条目即使旧 key 命中也不动。
+     *
+     * @return {@link #WEB_OK} 成功；{@link #WEB_EXISTS} 新名字已被占用；
+     *         {@link #WEB_NOT_FOUND} 当前配置里没有这条网页源；其它返回码见 {@link #deleteWebSource}
+     */
+    public static int renameWebSource(String oldKey, String newName, String newUrl) {
+        String webUrl = normalizeWebSourceUrl(newUrl);
+        if (webUrl == null) return WEB_INVALID;
+        String webName = newName == null ? "" : newName.trim();
+        if (webName.isEmpty()) webName = deriveWebSourceName(webUrl);
+        if (webName.isEmpty()) return WEB_INVALID;
+        if (oldKey == null || oldKey.trim().isEmpty()) return WEB_INVALID;
+        String cfg = getCurrentConfigUrl();
+        if (cfg == null || cfg.trim().isEmpty()) return WEB_NO_CONFIG;
+        if (isNetworkConfigUrl(cfg)) return WEB_NETWORK;
+        File config = currentConfigFile();
+        if (config == null) return WEB_NO_CONFIG;
+        String text = readTextFile(config);
+        if (text == null || text.isEmpty()) return WEB_NO_SITES;
+        JsonObject root;
+        try {
+            root = JsonParser.parseString(text).getAsJsonObject();
+        } catch (Throwable e) {
+            return WEB_NO_SITES;
+        }
+        if (root == null || !root.has("sites") || !root.get("sites").isJsonArray()) return WEB_NO_SITES;
+        for (JsonElement e : root.getAsJsonArray("sites")) {
+            if (!e.isJsonObject()) continue;
+            JsonElement k = e.getAsJsonObject().get("key");
+            if (k != null && k.isJsonPrimitive() && webName.equals(k.getAsString()) && !webName.equals(oldKey)) return WEB_EXISTS;
+        }
+        int[] span = findSitesArraySpan(text);
+        if (span == null) return WEB_NO_SITES;
+        List<int[]> entries = findEntrySpans(text, span[0], span[1]);
+        if (entries == null) return WEB_NO_SITES;
+        int[] targetSpan = null;
+        for (int[] entrySpan : entries) {
+            JsonObject entry = parseEntryObject(text, entrySpan);
+            if (entry != null && isWebSourceEntry(entry) && oldKey.equals(primitiveString(entry, "key"))) {
+                targetSpan = entrySpan;
+                break;
+            }
+        }
+        if (targetSpan == null) return WEB_NOT_FOUND;
+        String entryText = text.substring(targetSpan[0], targetSpan[1] + 1);
+        String replaced = replaceEntryField(entryText, "key", webName);
+        if (replaced == null) return WEB_NO_SITES;
+        replaced = replaceEntryField(replaced, "name", webName);
+        if (replaced == null) return WEB_NO_SITES;
+        replaced = replaceEntryField(replaced, "主页url", webUrl);
+        if (replaced == null) return WEB_NO_SITES;
+        String updated = text.substring(0, targetSpan[0]) + replaced + text.substring(targetSpan[1] + 1);
+        try {
+            JsonParser.parseString(updated).getAsJsonObject();
+        } catch (Throwable e) {
+            DebugLogStore.add(TAG, "网页源改名后校验失败，不落盘：" + e);
+            return WEB_NO_SITES;
+        }
+        int writeResult = writeTextFileCode(config, updated);
+        if (writeResult != WEB_OK) return writeResult;
+        DebugLogStore.add(TAG, "网页源已改名：" + oldKey + " -> " + webName + "（" + config.getAbsolutePath() + "）");
+        return WEB_OK;
+    }
+
+    /** v67：配置里一条网页源条目——只有 key/name/主页url，没有 api/ext。 */
+    private static boolean isWebSourceEntry(JsonObject entry) {
+        if (entry == null) return false;
+        if (TextUtils.isEmpty(primitiveString(entry, "主页url"))) return false;
+        return TextUtils.isEmpty(primitiveString(entry, "api")) && TextUtils.isEmpty(primitiveString(entry, "ext"));
+    }
+
+    /** v67：按 span 切出一条数组内对象条目并解析成 JsonObject；失败返回 null。 */
+    private static JsonObject parseEntryObject(String text, int[] span) {
+        try {
+            JsonElement element = JsonParser.parseString(text.substring(span[0], span[1] + 1));
+            return element.isJsonObject() ? element.getAsJsonObject() : null;
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    /**
+     * v67：条目文本内替换一个顶层字符串字段的值（只认 depth==1 的字段名，后面须跟冒号与
+     * 字符串值；同名字符串值不会误认）。字段不存在 / 值不是字符串时返回 null。
+     * 值按 JSON 转义后写回（含引号整体替换）。
+     */
+    private static String replaceEntryField(String entryText, String field, String value) {
+        String quoted = new JsonPrimitive(value).toString();
+        int depth = 0;
+        int i = 0;
+        int len = entryText.length();
+        while (i < len) {
+            char c = entryText.charAt(i);
+            if (c == '"') {
+                int end = skipString(entryText, i);
+                if (end < 0) return null;
+                if (depth == 1 && field.equals(entryText.substring(i + 1, end))) {
+                    int j = end + 1;
+                    while (j < len && Character.isWhitespace(entryText.charAt(j))) j++;
+                    if (j < len && entryText.charAt(j) == ':') {
+                        j++;
+                        while (j < len && Character.isWhitespace(entryText.charAt(j))) j++;
+                        if (j >= len || entryText.charAt(j) != '"') return null;
+                        int valueEnd = skipString(entryText, j);
+                        if (valueEnd < 0) return null;
+                        return entryText.substring(0, j) + quoted + entryText.substring(valueEnd + 1);
+                    }
+                    // 同名字符串值（后面不是冒号）：不是字段，继续往后找
+                }
+                i = end + 1;
+                continue;
+            }
+            if (c == '{' || c == '[') depth++;
+            else if (c == '}' || c == ']') depth--;
+            i++;
+        }
+        return null;
     }
 
     /**
@@ -3139,8 +3332,15 @@ public class LocalSourceHub {
 
     /** v61：数组内最后一个对象条目的 [左大括号, 右大括号] 下标；空数组返回 null。 */
     private static int[] findLastEntrySpan(String text, int arrayOpen, int arrayClose) {
+        List<int[]> entries = findEntrySpans(text, arrayOpen, arrayClose);
+        if (entries == null || entries.isEmpty()) return null;
+        return entries.get(entries.size() - 1);
+    }
+
+    /** v67：数组内全部对象条目的 [左大括号, 右大括号] 下标（按出现顺序）；结构非法返回 null。 */
+    private static List<int[]> findEntrySpans(String text, int arrayOpen, int arrayClose) {
+        List<int[]> result = new ArrayList<>();
         int i = arrayOpen + 1;
-        int[] last = null;
         while (i < arrayClose) {
             char c = text.charAt(i);
             if (c == '"') {
@@ -3152,13 +3352,13 @@ public class LocalSourceHub {
             if (c == '{') {
                 int close = matchBracket(text, i);
                 if (close < 0 || close > arrayClose) return null;
-                last = new int[]{i, close};
+                result.add(new int[]{i, close});
                 i = close + 1;
                 continue;
             }
             i++;
         }
-        return last;
+        return result;
     }
 
     /** v61：跳过一个 JSON 字符串（text.charAt(start) 须为 '"'），返回收尾引号下标；未闭合返回 -1。 */
@@ -4476,5 +4676,6 @@ public class LocalSourceHub {
         }
     }
 }
+
 
 
