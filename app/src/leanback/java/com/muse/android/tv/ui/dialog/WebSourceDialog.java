@@ -14,6 +14,7 @@ import com.muse.android.tv.api.loader.LocalSourceHub;
 import com.muse.android.tv.databinding.DialogWebSourceBinding;
 import com.muse.android.tv.impl.Callback;
 import com.muse.android.tv.utils.Notify;
+import com.muse.android.tv.utils.PermissionUtil;
 import com.muse.android.tv.utils.ResUtil;
 
 /**
@@ -21,6 +22,8 @@ import com.muse.android.tv.utils.ResUtil;
  * 输网址（必填）+ 名称（可选，留空自动取域名），追加到当前配置 sites 数组末尾，
  * 写完重载配置，新站立刻出现在切站列表里。逻辑与手机版 WebSourceDialog 一致，
  * 控件换成 leanback 弹窗形态（BaseAlertDialog + CustomEditText + 遥控器按钮）。
+ * v67：点确定先走权限统一门（与手机版同款）；通过后自动重试本次添加，拒绝弹
+ * 权限提示 +「去设置」。
  */
 public class WebSourceDialog extends BaseAlertDialog {
 
@@ -68,16 +71,21 @@ public class WebSourceDialog extends BaseAlertDialog {
             Notify.show(R.string.site_web_source_url_invalid);
             return;
         }
-        dismiss();
-        addWebSource(webName, webUrl);
+        // v67：先走权限门；已授予直接加，未授予弹系统申请，通过后自动重试本次添加
+        PermissionUtil.ensureStoragePermission(this,
+                () -> {
+                    dismiss();
+                    addWebSource(webName, webUrl);
+                },
+                this::showPermissionDenied);
     }
 
     private void addWebSource(String name, String url) {
         new Thread(() -> {
             final int result = LocalSourceHub.appendWebSource(name, url);
             App.post(() -> {
-                if (result == LocalSourceHub.WEB_OK) {
-                    Notify.show(ResUtil.getString(R.string.site_web_source_done, name));
+                if (result == LocalSourceHub.WEB_OK || result == LocalSourceHub.WEB_CREATED) {
+                    Notify.show(ResUtil.getString(result == LocalSourceHub.WEB_CREATED ? R.string.site_web_source_created : R.string.site_web_source_done, name));
                     // 写完重载配置：新站立刻进切站列表，不用手动刷新
                     VodConfig.get().init().load(new Callback() {
                         @Override
@@ -91,9 +99,24 @@ public class WebSourceDialog extends BaseAlertDialog {
                 } else if (result == LocalSourceHub.WEB_EXISTS) Notify.show(R.string.site_web_source_exists);
                 else if (result == LocalSourceHub.WEB_NETWORK) Notify.show(R.string.site_web_source_network);
                 else if (result == LocalSourceHub.WEB_NO_CONFIG) Notify.show(R.string.site_web_source_no_config);
+                else if (result == LocalSourceHub.WEB_NO_PERMISSION) showPermissionDenied();
                 else Notify.show(R.string.site_web_source_fail);
             });
         }, "local-source-websource").start();
+    }
+
+    /** v67：拒绝 / 写盘时才发现没权限：弹权限提示 +「去设置」；弹窗已不在时退回 Toast。 */
+    private void showPermissionDenied() {
+        if (!isAdded()) {
+            Notify.show(R.string.websource_storage_permission_required);
+            return;
+        }
+        FragmentActivity activity = requireActivity();
+        new MaterialAlertDialogBuilder(activity)
+                .setMessage(R.string.websource_storage_permission_required)
+                .setPositiveButton(R.string.permission_open_settings, (dialog, which) -> PermissionUtil.openAppSettings(activity))
+                .setNegativeButton(R.string.dialog_negative, null)
+                .show();
     }
 
     private static boolean isBlank(String value) {

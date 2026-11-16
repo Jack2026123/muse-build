@@ -22,6 +22,7 @@ import android.util.TypedValue;
 import java.util.concurrent.ConcurrentHashMap;
 
 import java.io.File;
+import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.OutputStream;
 import java.nio.charset.Charset;
@@ -2846,15 +2847,32 @@ public class LocalSourceHub {
         }
     }
 
-    /** r24：写文本文件（失败返回 false）。 */
+    /** r24：写文本文件（失败返回 false；v67：权限失败由 writeTextFileCode 区分）。 */
     private static boolean writeTextFile(File file, String text) {
+        return writeTextFileCode(file, text) == WEB_OK;
+    }
+
+    /**
+     * v67：写文本文件（返回码版）——SecurityException / EACCES 单独认成无权限，
+     * 与其它写盘失败分开，调用方按返回码提示。
+     *
+     * @return {@link #WEB_OK} 成功；{@link #WEB_NO_PERMISSION} 无权限；{@link #WEB_WRITE_FAIL} 其它写盘失败
+     */
+    private static int writeTextFileCode(File file, String text) {
         try (OutputStream out = new FileOutputStream(file)) {
             out.write(text.getBytes(StandardCharsets.UTF_8));
             out.flush();
-            return true;
+            return WEB_OK;
+        } catch (SecurityException e) {
+            DebugLogStore.add(TAG, "写 json 无权限：" + file.getAbsolutePath() + "：" + e);
+            return WEB_NO_PERMISSION;
+        } catch (FileNotFoundException e) {
+            DebugLogStore.add(TAG, "写 json 失败：" + file.getAbsolutePath() + "：" + e);
+            if (e.getMessage() != null && e.getMessage().contains("EACCES")) return WEB_NO_PERMISSION;
+            return WEB_WRITE_FAIL;
         } catch (Throwable e) {
             DebugLogStore.add(TAG, "写 json 失败：" + file.getAbsolutePath() + "：" + e);
-            return false;
+            return WEB_WRITE_FAIL;
         }
     }
 
@@ -2874,6 +2892,8 @@ public class LocalSourceHub {
     public static final int WEB_NO_SITES = -5;
     /** 网页源追加：写盘失败。 */
     public static final int WEB_WRITE_FAIL = -6;
+    /** v67：网页源追加：写盘被系统拒绝（无存储权限，与写盘失败分开）。 */
+    public static final int WEB_NO_PERMISSION = -7;
     /** v66：网页源追加：新建了网页源配置文件（成功，文件为新建）。 */
     public static final int WEB_CREATED = 2;
     /** v66：无配置时新建的网页源配置文件名（系统 Download 目录）。 */
@@ -2929,7 +2949,8 @@ public class LocalSourceHub {
             DebugLogStore.add(TAG, "网页源追加后校验失败，不落盘：" + e);
             return WEB_NO_SITES;
         }
-        if (!writeTextFile(config, updated)) return WEB_WRITE_FAIL;
+        int writeResult = writeTextFileCode(config, updated);
+        if (writeResult != WEB_OK) return writeResult;
         DebugLogStore.add(TAG, "网页源已追加：" + webName + " -> " + webUrl + "（" + config.getAbsolutePath() + "）");
         return WEB_OK;
     }
@@ -2947,7 +2968,7 @@ public class LocalSourceHub {
      * 再由调用方重载，新站立刻进切站列表。
      *
      * @return {@link #WEB_CREATED} 新建成功；文件已存在时返回正常追加的结果；
-     *         写盘失败 {@link #WEB_WRITE_FAIL}；其它失败兜底 {@link #WEB_NO_CONFIG}
+     *         写盘失败 {@link #WEB_WRITE_FAIL}；无权限 {@link #WEB_NO_PERMISSION}；其它失败兜底 {@link #WEB_NO_CONFIG}
      */
     private static int createWebSourceConfig(String webName, String webUrl) {
         File file = null;
@@ -2960,7 +2981,12 @@ public class LocalSourceHub {
         if (file == null) return WEB_NO_CONFIG;
         try {
             File parent = file.getParentFile();
-            if (parent != null && !parent.exists() && !parent.mkdirs()) return WEB_WRITE_FAIL;
+            try {
+                if (parent != null && !parent.exists() && !parent.mkdirs()) return WEB_WRITE_FAIL;
+            } catch (SecurityException e) {
+                DebugLogStore.add(TAG, "新建网页源配置目录无权限：" + e);
+                return WEB_NO_PERMISSION;
+            }
             if (file.isFile()) {
                 // 已存在：当作当前配置，走正常追加（同名 key 查重照旧）
                 setCurrentConfigUrl(WEB_SOURCE_FILE_URL);
@@ -2974,11 +3000,15 @@ public class LocalSourceHub {
             } catch (Throwable e) {
                 return WEB_NO_SITES;
             }
-            if (!writeTextFile(file, content)) return WEB_WRITE_FAIL;
+            int writeResult = writeTextFileCode(file, content);
+            if (writeResult != WEB_OK) return writeResult;
             Config.find(WEB_SOURCE_FILE_URL, WEB_SOURCE_FILE_NAME, 0);
             setCurrentConfigUrl(WEB_SOURCE_FILE_URL);
             DebugLogStore.add(TAG, "网页源配置文件已新建：" + webName + " -> " + webUrl + "（" + file.getAbsolutePath() + "）");
             return WEB_CREATED;
+        } catch (SecurityException e) {
+            DebugLogStore.add(TAG, "新建网页源配置文件无权限：" + e);
+            return WEB_NO_PERMISSION;
         } catch (Throwable e) {
             DebugLogStore.add(TAG, "新建网页源配置文件失败：" + e);
             return WEB_NO_CONFIG;
@@ -4446,4 +4476,5 @@ public class LocalSourceHub {
         }
     }
 }
+
 
