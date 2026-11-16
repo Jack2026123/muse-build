@@ -762,6 +762,8 @@
     <string name="site_web_source_url_empty">URL cannot be empty</string>
     <string name="site_web_source_url_hint">URL, e.g. https://missav.ai/</string>
     <string name="site_web_source_url_invalid">Invalid URL, use an http/https address</string>
+    <!-- v69 主页空态提示 -->
+    <string name="vod_empty_tip">请添加站源</string>
     <!-- v67 网页源删除/改名 -->
     <string name="site_websource_delete">删除网页源</string>
     <string name="site_websource_rename">改名</string>
