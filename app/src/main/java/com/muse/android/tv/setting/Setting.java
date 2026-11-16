@@ -39,6 +39,14 @@ public class Setting {
         Prefers.put("ua", ua);
     }
 
+    public static String getLastWebHost() {
+        return Prefers.getString("last_web_host");
+    }
+
+    public static void putLastWebHost(String host) {
+        Prefers.put("last_web_host", host);
+    }
+
     public static String getKeyword() {
         return Prefers.getString("keyword");
     }
@@ -166,3 +174,4 @@ public class Setting {
         }
     }
 }
+

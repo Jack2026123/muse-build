@@ -1338,6 +1338,7 @@ public class WebPlayActivity extends BaseActivity implements EpisodeAdapter.OnCl
     private String mClick = "";
     private String mAnchorUrl = "";
     private boolean mBlankRecovered = false;
+    private Runnable mBlankRecheck; // v56: delayed blank re-check, cancelled on new navigation
     private int mValidatorLogs = 0;
     private int mPosition;
     private boolean mBarsVisible = true;
@@ -1424,8 +1425,23 @@ public class WebPlayActivity extends BaseActivity implements EpisodeAdapter.OnCl
         mEmpty = new WebResourceResponse("text/plain", "utf-8", new ByteArrayInputStream(new byte[0]));
         initInsets();
         initWebView();
-        // v105：切源 = 全新浏览器——新开一个站的 webview 时先清掉 webview 缓存（上一个站的页面/资源不留着，避免缓存里的旧站串进来）。
-        mBinding.web.clearCache(true);
+        // v56：只在换站时清缓存——v105 的无条件 clearCache(true) 会把 CF 验证关联的缓存状态一起清掉，
+        // 导致每次进站都像全新浏览器、反复验证。同站重进不再清缓存，验证状态得以保留。
+        // DIAG-CF-REFRESH (temporary, remove after Liu accepts)
+        String openUrl = intent.getStringExtra("url");
+        String openHost = "";
+        if (!TextUtils.isEmpty(openUrl)) {
+            String h = Uri.parse(openUrl).getHost();
+            if (h != null) openHost = h;
+        }
+        String lastHost = Setting.getLastWebHost();
+        if (!TextUtils.isEmpty(openHost) && openHost.equals(lastHost)) {
+            DebugLogStore.add("WebPlay", "v56 clearCache skipped, same site host=" + openHost);
+        } else {
+            mBinding.web.clearCache(true);
+            DebugLogStore.add("WebPlay", "v56 clearCache ran, openHost=" + openHost + " lastHost=" + lastHost);
+            if (!TextUtils.isEmpty(openHost)) Setting.putLastWebHost(openHost);
+        }
         updateNav();
         mBinding.getRoot().post(this::applyBarOffset);
         String url = intent.getStringExtra("url");
@@ -1448,6 +1464,10 @@ public class WebPlayActivity extends BaseActivity implements EpisodeAdapter.OnCl
         });
         mBinding.refresh.setOnClickListener(view -> {
             showBars();
+            // DIAG-CF-REFRESH (temporary, remove after Liu accepts)
+            String curUrl = mBinding.web.getUrl();
+            String curCk = curUrl == null ? null : CookieManager.getInstance().getCookie(curUrl);
+            DebugLogStore.add("WebPlay", "v56 refresh click url=" + curUrl + " cf_clearance=" + (curCk != null && curCk.contains("cf_clearance")));
             mBinding.web.reload();
         });
         mBinding.flag.setOnClickListener(view -> showFlags());
@@ -1672,6 +1692,7 @@ public class WebPlayActivity extends BaseActivity implements EpisodeAdapter.OnCl
                 if (url == null || url.equals("about:blank")) return;
                 // v96：先藏 webview，等 CLEAN_JS 首扫跑完再显示——hsck 首页顶部 58 条赌博横幅在首扫前会闪约 0.25 秒。
                 mBlankRecovered = false;
+                if (mBlankRecheck != null) view.removeCallbacks(mBlankRecheck);
                 view.setVisibility(View.INVISIBLE);
                 if (mForceShowWeb != null) view.removeCallbacks(mForceShowWeb);
                 mForceShowWeb = () -> view.setVisibility(View.VISIBLE);
@@ -1697,14 +1718,36 @@ public class WebPlayActivity extends BaseActivity implements EpisodeAdapter.OnCl
                 evaluate(getScript(url), 0);
                 // v97：不再立即显示——等 CLEAN_JS 回调再显示，否则分类页加载快会抢在首扫前闪出横幅墙（同 onPageCommitVisible）。
                 view.evaluateJavascript(CLEAN_JS, value -> view.setVisibility(View.VISIBLE));
+                // v56：把 Cookie 落盘——cf_clearance 只留在内存里时进程一死验证就丢；flush 后重进、刷新仍有效。
+                CookieManager.getInstance().flush();
+                // DIAG-CF-REFRESH (temporary, remove after Liu accepts)
+                String finCk = CookieManager.getInstance().getCookie(url);
+                DebugLogStore.add("WebPlay", "v56 onPageFinished flush, url=" + url + " cf_clearance=" + (finCk != null && finCk.contains("cf_clearance")));
                 // v100：空白页回滚——被拦的广告跳转有时会把当前页卸成空文档（标题空、无视频、无图），
                 // 点什么都没反应。检出空白就回滚到入口地址一次（mAnchorUrl），避免死在空白页。
-                view.evaluateJavascript("(function(){try{return ((document.title||'').trim()===''&&(document.body?document.body.innerText.trim():'')===''&&document.images.length===0)?'1':'0';}catch(e){return '0';}})()", blankVal -> {
-                    if ("1".equals(blankVal) && !mBlankRecovered && !TextUtils.isEmpty(mAnchorUrl) && !mAnchorUrl.equals(url)) {
+                // v56：首次检出空白不立即回滚——Nuxt 等 SPA 壳在 onPageFinished 时尚未水合，标题/正文/图
+                // 暂时全空是正常现象；延时 1.5 秒复核，仍空白才回滚，避免刷新被误判成空白页。
+                String blankJs = "(function(){try{var t=(document.title||'').trim()==='';var b=(document.body?document.body.innerText.trim():'')==='';var n=document.images.length;return (t?'1':'0')+','+(b?'1':'0')+','+n;}catch(e){return '0,0,0';}})()";
+                view.evaluateJavascript(blankJs, blankVal -> {
+                    String val = blankVal;
+                    if (val != null && val.length() >= 2 && val.startsWith("\"") && val.endsWith("\"")) val = val.substring(1, val.length() - 1);
+                    // DIAG-CF-REFRESH (temporary, remove after Liu accepts)
+                    DebugLogStore.add("WebPlay", "v56 blank check url=" + url + " val=" + val + " recovered=" + mBlankRecovered);
+                    if (!"1,1,0".equals(val)) return;
+                    if (mBlankRecovered || TextUtils.isEmpty(mAnchorUrl) || mAnchorUrl.equals(url)) return;
+                    if (mBlankRecheck != null) view.removeCallbacks(mBlankRecheck);
+                    mBlankRecheck = () -> view.evaluateJavascript(blankJs, reVal -> {
+                        String re = reVal;
+                        if (re != null && re.length() >= 2 && re.startsWith("\"") && re.endsWith("\"")) re = re.substring(1, re.length() - 1);
+                        // DIAG-CF-REFRESH (temporary, remove after Liu accepts)
+                        DebugLogStore.add("WebPlay", "v56 blank recheck url=" + url + " val=" + re + " recovered=" + mBlankRecovered);
+                        if (!"1,1,0".equals(re)) return;
+                        if (mBlankRecovered || TextUtils.isEmpty(mAnchorUrl) || mAnchorUrl.equals(url)) return;
                         mBlankRecovered = true;
                         DebugLogStore.add("WebPlay", "blank page, reload anchor url=" + mAnchorUrl);
                         view.loadUrl(mAnchorUrl);
-                    }
+                    });
+                    view.postDelayed(mBlankRecheck, 1500);
                 });
                 showBars();
             }
@@ -2098,18 +2141,22 @@ public class WebPlayActivity extends BaseActivity implements EpisodeAdapter.OnCl
     @Override
     protected void onPause() {
         mBinding.web.onPause();
+        // v56：切后台/切站前把 Cookie 落盘，验证状态不因进程回收而丢。
+        CookieManager.getInstance().flush();
         super.onPause();
     }
 
     @Override
     protected void onDestroy() {
         if (mBinding != null) {
+            if (mBlankRecheck != null) mBinding.web.removeCallbacks(mBlankRecheck);
             mBinding.web.loadUrl("about:blank");
             mBinding.web.destroy();
         }
         super.onDestroy();
     }
 }
+
 
 
 
