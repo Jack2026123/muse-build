@@ -876,7 +876,8 @@ public class VideoActivity extends PlaybackActivity implements Clock.Callback, C
 
     private static String resolveHomePageUrl(Site site) {
         // v60（Liu 2026-11-16 定）：主页取法重排——条目「主页url」> webPage 模板 > 规则里「发布站」/「防丢url」
-        // > 规则里「域名-c」/「域名*」> 详情真实域名。py/js 没有 JSON 规则，走原来 siteBaseUrl 那套，原样不动。
+        // > 规则里「域名-c」/「域名*」> 详情真实域名 > siteBaseUrl 兜底（所有源）。
+        // v62：siteBaseUrl 不再只限 rule == null——py/js 源的 ext 也可以是行内 JSON，门会误杀。
         if (site != null) {
             String entry = site.getHomePageUrl();
             if (entry != null && !entry.isEmpty() && !entry.contains("[工具:")) {
@@ -901,14 +902,6 @@ public class VideoActivity extends PlaybackActivity implements Clock.Callback, C
         if (publish != null) return publish;
         String domain = ruleDomainUrl(site, rule);
         if (domain != null) return domain;
-        if (rule == null) {
-            // py/js 没有 JSON 规则：走原来 siteBaseUrl 那套（脚本 homepage 注释/竞速域名），原样不动。
-            String base = siteBaseUrl(site);
-            if (base != null && !base.isEmpty()) {
-                String origin = originOf(base);
-                if (origin != null && !isIpHost(origin)) return origin + "/";
-            }
-        }
         // detailOrigin 只对重定向站有意义（v89：非重定向站即使误记了也绝不能用，否则主页被带偏）。
         if (site != null && isRedirectSite(site)) {
             String recorded = SpiderDebug.detailOrigin(site.getKey());
@@ -916,6 +909,16 @@ public class VideoActivity extends PlaybackActivity implements Clock.Callback, C
                 String origin = originOf(recorded);
                 if (origin != null) return origin + "/";
             }
+        }
+        // v62：siteBaseUrl 对所有源都当兜底。v60 的 if (rule == null) 门是错的——
+        // py 源（MissAV、老版多域名金牌）的 ext 本身就是行内 JSON（含 site 字段），
+        // ruleJsonObject 会返回非空，被误判成 JSON 规则源，siteBaseUrl 被跳过，
+        // 主页推不出来，浏览器入口就藏起来了。「ext 是 JSON」≠「是 xbpq 规则源」。
+        // 放 detailOrigin 后面：跳转站仍优先真实域名（v58 的顺序）。
+        String base = siteBaseUrl(site);
+        if (base != null && !base.isEmpty()) {
+            String origin = originOf(base);
+            if (origin != null && !isIpHost(origin)) return origin + "/";
         }
         return null;
     }
