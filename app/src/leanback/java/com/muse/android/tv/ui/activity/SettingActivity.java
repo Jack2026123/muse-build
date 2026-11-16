@@ -38,6 +38,7 @@ import com.muse.android.tv.ui.dialog.LiveDialog;
 import com.muse.android.tv.ui.dialog.LocalSourceDialog;
 import com.muse.android.tv.ui.dialog.RestoreDialog;
 import com.muse.android.tv.ui.dialog.SiteDialog;
+import com.muse.android.tv.ui.dialog.WebSourceDialog;
 import com.muse.android.tv.utils.FileUtil;
 import com.muse.android.tv.utils.Notify;
 import com.muse.android.tv.utils.PermissionUtil;
@@ -110,6 +111,7 @@ public class SettingActivity extends BaseActivity implements ConfigListener, Sit
         mBinding.vod.setOnClickListener(this::onVod);
         mBinding.doh.setOnClickListener(this::setDoh);
         mBinding.localSource.setOnClickListener(this::onLocalSource);
+        mBinding.webSource.setOnClickListener(v -> WebSourceDialog.show(this));
         mBinding.live.setOnClickListener(this::onLive);
         mBinding.wall.setOnClickListener(this::onWall);
         mBinding.size.setOnClickListener(this::setSize);
