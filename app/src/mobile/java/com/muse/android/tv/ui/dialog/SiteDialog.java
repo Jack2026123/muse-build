@@ -120,6 +120,7 @@ public class SiteDialog extends BaseAlertDialog implements SiteAdapter.OnClickLi
         initKeyword();
         initMode();
         initSelection();
+        binding.addWebSource.setOnClickListener(v -> addWebSourceFlow());
         initGroup();
         // 过滤前先校验「上次选中的分类」在当前配置里还存不存在（换配置后旧分类可能已消失）
         normalizeGroup();
@@ -197,6 +198,7 @@ public class SiteDialog extends BaseAlertDialog implements SiteAdapter.OnClickLi
         int avail = ResUtil.getScreenHeight() - ResUtil.dp2px(96); // 状态栏 + 弹窗上下留白
         int fixed = ResUtil.dp2px(56 + 12 + 48 + 16);              // 标题行 + 间距 + 分类 chips + 内边距
         if (adapter != null && adapter.isSelecting()) fixed += ResUtil.dp2px(52 + 60 + 12); // 勾选栏 + 确认按钮 + 间距
+        if (adapter == null || !adapter.isSelecting()) fixed += ResUtil.dp2px(44 + 8); // v61 网页源按钮（常显）+ 间距
         int list = Math.max(ResUtil.dp2px(140), avail - fixed);
         return Math.min(list, ResUtil.dp2px(500));
     }
@@ -457,6 +459,7 @@ public class SiteDialog extends BaseAlertDialog implements SiteAdapter.OnClickLi
         // 整条按钮就消失，用户看到的就是「选中了源但没有确认按钮」。
         // 现在 0 项时置灰但仍可见，点了会提示先勾选。
         binding.selectConfirm.setVisibility(selecting ? View.VISIBLE : View.GONE);
+        binding.addWebSource.setVisibility(selecting ? View.GONE : View.VISIBLE);
         binding.selectConfirm.setEnabled(!selecting || count > 0);
         binding.selectConfirm.setAlpha(selecting && count == 0 ? 0.45f : 1f);
         binding.selectCount.setText(getString(R.string.site_select_hint, count));
@@ -659,6 +662,69 @@ public class SiteDialog extends BaseAlertDialog implements SiteAdapter.OnClickLi
                 else Notify.show(R.string.site_rename_fail);
             });
         }, "local-source-rename").start();
+    }
+
+    /** v61 网页源：输网址（必填）+ 名称（可选，留空自动取域名），追加到当前配置 sites 数组末尾。 */
+    private void addWebSourceFlow() {
+        Context context = getContext();
+        if (context == null) return;
+        android.widget.LinearLayout layout = new android.widget.LinearLayout(context);
+        layout.setOrientation(android.widget.LinearLayout.VERTICAL);
+        int pad = Math.round(18 * getResources().getDisplayMetrics().density);
+        layout.setPadding(pad, pad, pad, pad);
+        android.widget.EditText urlInput = new android.widget.EditText(context);
+        urlInput.setSingleLine(true);
+        urlInput.setHint(R.string.site_web_source_url_hint);
+        urlInput.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_URI);
+        android.widget.EditText nameInput = new android.widget.EditText(context);
+        nameInput.setSingleLine(true);
+        nameInput.setHint(R.string.site_web_source_name_hint);
+        layout.addView(urlInput, new android.widget.LinearLayout.LayoutParams(
+                android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                android.widget.LinearLayout.LayoutParams.WRAP_CONTENT));
+        layout.addView(nameInput, new android.widget.LinearLayout.LayoutParams(
+                android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                android.widget.LinearLayout.LayoutParams.WRAP_CONTENT));
+        androidx.appcompat.app.AlertDialog dialog = new MaterialAlertDialogBuilder(context, R.style.TaixuAlertDialogTheme)
+                .setTitle(R.string.site_web_source_title)
+                .setView(layout)
+                .setNegativeButton(R.string.dialog_negative, null)
+                .setPositiveButton(R.string.dialog_positive, null)
+                .create();
+        dialog.show();
+        // 强校验：网址无效原地提示，不关弹窗，避免「点了确定没反应」
+        dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+            String rawUrl = urlInput.getText() == null ? "" : urlInput.getText().toString();
+            String webUrl = LocalSourceHub.normalizeWebSourceUrl(rawUrl);
+            if (webUrl == null) {
+                Notify.show(isBlank(rawUrl) ? R.string.site_web_source_url_empty : R.string.site_web_source_url_invalid);
+                return;
+            }
+            String rawName = nameInput.getText() == null ? "" : nameInput.getText().toString().trim();
+            String webName = rawName.isEmpty() ? LocalSourceHub.deriveWebSourceName(webUrl) : rawName;
+            if (webName.isEmpty()) {
+                Notify.show(R.string.site_web_source_url_invalid);
+                return;
+            }
+            dialog.dismiss();
+            doAddWebSource(webName, webUrl);
+        });
+    }
+
+    private void doAddWebSource(String name, String url) {
+        new Thread(() -> {
+            final int result = LocalSourceHub.appendWebSource(name, url);
+            App.post(() -> {
+                if (!isAdded()) return;
+                if (result == LocalSourceHub.WEB_OK) {
+                    Notify.show(getString(R.string.site_web_source_done, name));
+                    reloadAfterMove();
+                } else if (result == LocalSourceHub.WEB_EXISTS) Notify.show(R.string.site_web_source_exists);
+                else if (result == LocalSourceHub.WEB_NETWORK) Notify.show(R.string.site_web_source_network);
+                else if (result == LocalSourceHub.WEB_NO_CONFIG) Notify.show(R.string.site_web_source_no_config);
+                else Notify.show(R.string.site_web_source_fail);
+            });
+        }, "local-source-websource").start();
     }
 
     /** 重命名分类文件夹：先在目录树里把光标落到某一层，再输入新名。 */
@@ -1147,3 +1213,4 @@ public class SiteDialog extends BaseAlertDialog implements SiteAdapter.OnClickLi
         setWidth(ResUtil.isLand(requireContext()) ? 0.5f : 0.98f);
     }
 }
+

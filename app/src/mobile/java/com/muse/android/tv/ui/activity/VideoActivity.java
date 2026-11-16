@@ -1029,6 +1029,57 @@ public class VideoActivity extends PlaybackActivity implements Clock.Callback, C
         }
         return origin + "/";
     }
+    /** v61：主页是发布站/跳转页时返回其 host（供 WebPlayActivity 放行该页上的人工点按跳转）。
+     * 只有「发布站/防丢url」（第 3 步）与「域名-c/域名* 的 [工具:重定向]」（第 4 步工具）算跳转页；
+     * 条目主页url、webPage 模板、干净域名直接就是本站，不算。 */
+    public static String homeJumpHost(Site site) {
+        if (site == null) return null;
+        String entry = site.getHomePageUrl();
+        if (entry != null && !entry.isEmpty() && !entry.contains("[工具:")) {
+            if (originOf(entry) != null) return null;
+        }
+        String template = webPageTemplate(site);
+        if (template != null && !template.isEmpty() && originOf(template) != null) return null;
+        JSONObject rule = ruleJsonObject(site);
+        String publish = rulePublishUrl(site, rule);
+        if (publish != null) return hostOf(publish);
+        String domain = ruleDomainUrl(site, rule);
+        if (domain != null && domainRawIsTool(rule)) return hostOf(domain);
+        return null;
+    }
+
+    /** v61：规则里用于取主页的那条域名值是不是 [工具:重定向] 模板（与 domainUrlFromObject 同顺序）。 */
+    private static boolean domainRawIsTool(JSONObject rule) {
+        if (rule == null) return false;
+        String rawC = rule.optString("域名-c", "");
+        if (!rawC.isEmpty()) return rawC.contains("[工具:");
+        java.util.Iterator<String> keys = rule.keys();
+        while (keys.hasNext()) {
+            String key = keys.next();
+            if (!key.contains("域名") || key.equals("域名-c")) continue;
+            String raw = rule.optString(key, "");
+            if (!raw.isEmpty()) return raw.contains("[工具:");
+        }
+        if (rule.has("ext")) {
+            try {
+                return domainRawIsTool(rule.getJSONObject("ext"));
+            } catch (Exception ignored) {
+            }
+        }
+        return false;
+    }
+
+    /** v61：取 URL 的 host（小写，去端口）；取不到返回 null。 */
+    private static String hostOf(String url) {
+        if (url == null) return null;
+        try {
+            String host = Uri.parse(url).getHost();
+            return TextUtils.isEmpty(host) ? null : host.toLowerCase(Locale.US);
+        } catch (Throwable e) {
+            return null;
+        }
+    }
+
     private String siteHomePageUrl() {
         return siteHomePageUrl(getSite());
     }
@@ -1508,7 +1559,7 @@ public class VideoActivity extends PlaybackActivity implements Clock.Callback, C
         // 主页模式：站内搜片、换线路、选集全用网站自己的功能，壳子不传集列表/线路。
         if (TextUtils.isEmpty(click)) click = getSite().getClick();
         player().stop();
-        WebPlayActivity.start(this, getName(), url, header, new ArrayList<>(), new ArrayList<>(), 0, getKey(), "", click, new ArrayList<>());
+        WebPlayActivity.start(this, getName(), url, header, new ArrayList<>(), new ArrayList<>(), 0, getKey(), "", click, new ArrayList<>(), homeJumpHost(getSite()));
     }
 
 
@@ -2807,6 +2858,7 @@ public class VideoActivity extends PlaybackActivity implements Clock.Callback, C
         super.onDestroy();
     }
 }
+
 
 
 
