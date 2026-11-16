@@ -3275,6 +3275,9 @@ public class LocalSourceHub {
             }
             if (file.isFile()) {
                 // 已存在：当作当前配置，走正常追加（同名 key 查重照旧）
+                // v68：注册并设为当前点播配置 —— 重装后数据库是空的，不注册则 vod() 取不到它，
+                // 重载读空配置，网页源永不显示；update() 打时间戳，findOne(0) 才能取到它
+                Config.find(WEB_SOURCE_FILE_URL, WEB_SOURCE_FILE_NAME, 0).update();
                 setCurrentConfigUrl(WEB_SOURCE_FILE_URL);
                 return appendWebSource(webName, webUrl);
             }
@@ -3288,7 +3291,8 @@ public class LocalSourceHub {
             }
             int writeResult = writeTextFileCode(file, content);
             if (writeResult != WEB_OK) return writeResult;
-            Config.find(WEB_SOURCE_FILE_URL, WEB_SOURCE_FILE_NAME, 0);
+            // v68：update() 打时间戳并设为当前配置 —— 光 insert() 不打 time，vod() 按 time 最新取，仍取旧配置
+            Config.find(WEB_SOURCE_FILE_URL, WEB_SOURCE_FILE_NAME, 0).update();
             setCurrentConfigUrl(WEB_SOURCE_FILE_URL);
             DebugLogStore.add(TAG, "网页源配置文件已新建：" + webName + " -> " + webUrl + "（" + file.getAbsolutePath() + "）");
             return WEB_CREATED;
