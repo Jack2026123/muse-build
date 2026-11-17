@@ -1446,8 +1446,9 @@ public class WebPlayActivity extends BaseActivity implements EpisodeAdapter.OnCl
             if (!TextUtils.isEmpty(openHost)) Setting.putLastWebHost(openHost);
         }
         updateNav();
-        // 电视版：进页先把焦点落在顶栏返回键上，遥控器不用先找焦点；WebView 不抢焦点（布局里 focusable=false）。
-        mBinding.back.requestFocus();
+        // v38：进页焦点改落中性标题（无点击动作），不再落返回键——避免遥控器 OK 误点返回键关掉浏览器；
+        // 返回/刷新仍 focusable、仍能用遥控器操作；WebView 不抢焦点（布局里 focusable=false）。
+        mBinding.title.requestFocus();
         mBinding.getRoot().post(this::applyBarOffset);
         String url = intent.getStringExtra("url");
         if (!TextUtils.isEmpty(url)) {
