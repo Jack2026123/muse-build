@@ -179,7 +179,7 @@ public class WebSourceDialog extends BaseAlertDialog {
 
     private void onPositive(View view) {
         String rawUrl = binding.url.getText() == null ? "" : binding.url.getText().toString();
-        String webUrl = LocalSourceHub.normalizeWebSourceUrl(rawUrl);
+        String webUrl = LocalSourceHub.normalizeWebSourceUrl(LocalSourceHub.sanitizeWebSourceUrl(rawUrl));
         if (webUrl == null) {
             Notify.show(isBlank(rawUrl) ? R.string.site_web_source_url_empty : R.string.site_web_source_url_invalid);
             return;
@@ -248,4 +248,5 @@ public class WebSourceDialog extends BaseAlertDialog {
         setWidth(0.55f);
     }
 }
+
 
