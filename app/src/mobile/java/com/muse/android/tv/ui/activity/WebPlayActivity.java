@@ -1376,7 +1376,14 @@ public class WebPlayActivity extends BaseActivity implements EpisodeAdapter.OnCl
     }
 
     public static void start(Activity activity, String title, String url, Map<String, String> header, ArrayList<String> names, ArrayList<String> ids, int position, String key, String flag, String click, ArrayList<String> flags) {
-        start(activity, title, url, header, names, ids, position, key, flag, click, flags, "");
+        // v75：不传 jumpHost 的入口也按入口 URL 的 host 算——主页浏览器入口（HomeActivity.openBrowser）
+        // 走这条重载，之前传 "" 导致 mJumpHost 为空，v61/v74 永远不生效，发布站/中间页跳转全被拦。
+        String host = "";
+        try {
+            if (!TextUtils.isEmpty(url)) host = Uri.parse(url).getHost();
+        } catch (Exception ignored) {
+        }
+        start(activity, title, url, header, names, ids, position, key, flag, click, flags, host == null ? "" : host);
     }
 
     /** v61：带跳转页 host 的重载——主页是发布站/跳转页时，把其 host 传进来放行该页上的人工点按跳转。 */
@@ -1423,6 +1430,17 @@ public class WebPlayActivity extends BaseActivity implements EpisodeAdapter.OnCl
         if (mClick == null) mClick = "";
         mJumpHost = intent.getStringExtra("jumpHost");
         if (mJumpHost == null) mJumpHost = "";
+        // v75：兜底——没传 jumpHost 的入口按入口 URL 的 host 算，mJumpHost 永不为空。
+        if (TextUtils.isEmpty(mJumpHost)) {
+            try {
+                String entryUrl = intent.getStringExtra("url");
+                if (!TextUtils.isEmpty(entryUrl)) {
+                    String h = Uri.parse(entryUrl).getHost();
+                    if (!TextUtils.isEmpty(h)) mJumpHost = h;
+                }
+            } catch (Exception ignored) {
+            }
+        }
         ArrayList<String> names = intent.getStringArrayListExtra("names");
         if (names != null) mNames = names;
         ArrayList<String> ids = intent.getStringArrayListExtra("ids");
@@ -2302,6 +2320,7 @@ public class WebPlayActivity extends BaseActivity implements EpisodeAdapter.OnCl
         super.onDestroy();
     }
 }
+
 
 
 
