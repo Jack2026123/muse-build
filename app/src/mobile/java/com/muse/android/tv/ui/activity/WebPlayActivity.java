@@ -1347,6 +1347,8 @@ public class WebPlayActivity extends BaseActivity implements EpisodeAdapter.OnCl
     private String mAnchorUrl = "";
     /** v61：主页是发布站/跳转页时其 host（VideoActivity 传进来）；该页上的人工点按跳转放行。 */
     private String mJumpHost = "";
+    /** v72：用户是否已点按——mJumpHost 只在用户点按前跟进初始页跳转。 */
+    private boolean mUserGestured = false;
     private boolean mBlankRecovered = false;
     private Runnable mBlankRecheck; // v56: delayed blank re-check, cancelled on new navigation
     private int mValidatorLogs = 0;
@@ -1604,6 +1606,8 @@ public class WebPlayActivity extends BaseActivity implements EpisodeAdapter.OnCl
 
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+                // v72：记下用户是否已点按——mJumpHost 只在用户点按前跟进初始页跳转。
+                if (request.hasGesture()) mUserGestured = true;
                 String scheme = request.getUrl().getScheme();
                 // 只放行网页本身；intent://、market://、tel: 等外部唤起一律堵死
                 if (!"http".equals(scheme) && !"https".equals(scheme) && !"blob".equals(scheme)) return true;
@@ -1712,6 +1716,18 @@ public class WebPlayActivity extends BaseActivity implements EpisodeAdapter.OnCl
             public void onPageStarted(WebView view, String url, Bitmap favicon) {
                 super.onPageStarted(view, url, favicon);
                 if (url == null || url.equals("about:blank")) return;
+                // v72：初始页跳转跟进——防丢url/发布站自动跳到真正的发布页时（如 n.plmmttv7y7m.com → vip1949.com），
+                // mJumpHost 还是起跳站 host，与当前页对不上，v61 例外不生效。用户点按前一次性跟进到新 host；
+                // 新 host 是广告域名时不跟进；用户一点按就不再跟进。
+                if (!mUserGestured && !TextUtils.isEmpty(mJumpHost)) {
+                    try {
+                        String newHost = Uri.parse(url).getHost();
+                        if (!TextUtils.isEmpty(newHost) && !newHost.equalsIgnoreCase(mJumpHost) && !isAd(newHost)) {
+                            mJumpHost = newHost;
+                        }
+                    } catch (Exception ignored) {
+                    }
+                }
                 // v96：先藏 webview，等 CLEAN_JS 首扫跑完再显示——hsck 首页顶部 58 条赌博横幅在首扫前会闪约 0.25 秒。
                 mBlankRecovered = false;
                 if (mBlankRecheck != null) view.removeCallbacks(mBlankRecheck);
