@@ -1658,6 +1658,17 @@ public class WebPlayActivity extends BaseActivity implements EpisodeAdapter.OnCl
                         mFollowJumpHost = true;
                         return false;
                     }
+                    // v74：跳转页上的无手势跳转放行——发布站/中间页自动跳到最新真实域名时，
+                    // 目标域名根本不含当前页域名（shewo1.cc → shewo49.cc、vip1949.com → zzztool.com），
+                    // v92（目标含当前 host）永远对不上。当前页就是跳转页（mJumpHost==当前 host）
+                    // 且目标不是广告域名时，无手势也放行；广告域名照样拦。
+                    // 这条同时打通两处：中间页 location.href 自动跳转，与 onCreateWindow 放行后
+                    // loadUrl 的二次拦截（程序调 loadUrl 没有手势）。
+                    if (!request.hasGesture() && !TextUtils.isEmpty(mJumpHost)
+                            && !TextUtils.isEmpty(currentHost) && mJumpHost.equalsIgnoreCase(currentHost)
+                            && (TextUtils.isEmpty(targetHost) || !isAd(targetHost))) {
+                        return false;
+                    }
                     // v106：只 return true，不 stopLoading()——v101 的 stopLoading() 会把当前片页也杀成空白
                     //（23:34:06 点播后广告跳转被拦，紧随其后 page videos=0 titleLen=0；只拦跳转、页面留着）。
                     return true;
@@ -1760,16 +1771,18 @@ public class WebPlayActivity extends BaseActivity implements EpisodeAdapter.OnCl
                 // v73:拦截新窗口请求(target="_blank" / window.open),在当前 WebView 打开。
                 // 新窗口的 URL 不直接给出:建一个临时 WebView 接住它,在其 shouldOverrideUrlLoading 里
                 // 用 isAllowedNewWindowUrl 判断(与 shouldOverrideUrlLoading 同一套规则)。
-                // 注意:这里只处理新窗口请求;同标签的自动跨域跳转走 shouldOverrideUrlLoading,照旧拦截。
+                // 注意:这里只处理新窗口请求;同标签的自动跨域跳转走 shouldOverrideUrlLoading
+                // (v74:跳转页到非广告域名放行,其余照旧拦截)。
                 WebView tempWebView = new WebView(view.getContext());
                 tempWebView.setWebViewClient(new WebViewClient() {
                     private boolean mHandled = false;
 
                     private void handleNewWindowUrl(String url) {
                         if (mHandled) return;
+                        // v74：空白页不占标记、不销毁——新窗口先报 about:blank 时，等真正的 URL 再判断。
+                        if (TextUtils.isEmpty(url) || url.equals("about:blank")) return;
                         mHandled = true;
-                        if (!TextUtils.isEmpty(url) && !url.equals("about:blank")
-                                && isAllowedNewWindowUrl(url, isUserGesture)) {
+                        if (isAllowedNewWindowUrl(url, isUserGesture)) {
                             // 放行:在当前 WebView 打开;让 mJumpHost 跟到新页(修 v72 mUserGestured 缺陷)。
                             mFollowJumpHost = true;
                             view.loadUrl(url);
@@ -2019,6 +2032,13 @@ public class WebPlayActivity extends BaseActivity implements EpisodeAdapter.OnCl
         if (isPopunderPath(uri.getPath())) return false;
         // v61:当前页是跳转页 + 带手势 + 目标非广告 → 放行(发布页人工点按到真实站)。
         if (hasGesture && !TextUtils.isEmpty(mJumpHost)
+                && !TextUtils.isEmpty(currentHost) && mJumpHost.equalsIgnoreCase(currentHost)
+                && (TextUtils.isEmpty(targetHost) || !isAd(targetHost))) {
+            return true;
+        }
+        // v74:当前页是跳转页 + 无手势 + 目标非广告 → 放行(与 shouldOverrideUrlLoading 同口径；
+        // 跳转页 window.open 到最新真实域名时，setTimeout 丢了手势也要放行)。
+        if (!hasGesture && !TextUtils.isEmpty(mJumpHost)
                 && !TextUtils.isEmpty(currentHost) && mJumpHost.equalsIgnoreCase(currentHost)
                 && (TextUtils.isEmpty(targetHost) || !isAd(targetHost))) {
             return true;
