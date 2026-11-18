@@ -8,6 +8,7 @@ import android.graphics.Bitmap;
 import android.net.Uri;
 import android.net.http.SslError;
 import android.os.Bundle;
+import android.os.Message;
 import android.os.SystemClock;
 import android.text.TextUtils;
 import android.util.TypedValue;
@@ -1349,6 +1350,12 @@ public class WebPlayActivity extends BaseActivity implements EpisodeAdapter.OnCl
     private String mJumpHost = "";
     /** v72：用户是否已点按——mJumpHost 只在用户点按前跟进初始页跳转。 */
     private boolean mUserGestured = false;
+    /** v73:经放行的点按/新窗口到达新页时,让 mJumpHost 跟到新页一次(修 v72 mUserGestured 缺陷)。 */
+    private boolean mFollowJumpHost = false;
+    // v93 跳转链路(v73 起放 Activity 层:onCreateWindow 放行中转跳转后也要记,供 302 跟进认)。
+    private String mJumpAnchorHost = null;
+    private String mJumpRelayHost = null;
+    private long mJumpChainUntil = 0;
     private boolean mBlankRecovered = false;
     private Runnable mBlankRecheck; // v56: delayed blank re-check, cancelled on new navigation
     private int mValidatorLogs = 0;
@@ -1538,7 +1545,7 @@ public class WebPlayActivity extends BaseActivity implements EpisodeAdapter.OnCl
         setting.setUseWideViewPort(true);
         setting.setLoadWithOverviewMode(true);
         setting.setMediaPlaybackRequiresUserGesture(false);
-        setting.setSupportMultipleWindows(false);
+        setting.setSupportMultipleWindows(true);
         setting.setJavaScriptCanOpenWindowsAutomatically(false);
         setting.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
         String ua = Setting.getUa();
@@ -1550,13 +1557,6 @@ public class WebPlayActivity extends BaseActivity implements EpisodeAdapter.OnCl
 
     private WebViewClient webViewClient() {
         return new WebViewClient() {
-            // v93 跳转链路：放行一次中转跳转后，记下起跳站与中转站 + 10 秒窗口——中转站的 302 跟进
-            // 也会进 shouldOverrideUrlLoading（目标不带当前站地址）；同一条链的无手势跟进放行。
-            // 点按劫持带手势，到不了这里；窗口一过或页面落地即失效。
-            private String mJumpAnchorHost = null;
-            private String mJumpRelayHost = null;
-            private long mJumpChainUntil = 0;
-
             @Override
             public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
                 String host = request.getUrl().getHost();
@@ -1640,6 +1640,8 @@ public class WebPlayActivity extends BaseActivity implements EpisodeAdapter.OnCl
                 if (request.hasGesture() && !TextUtils.isEmpty(mJumpHost)
                         && !TextUtils.isEmpty(currentHost) && mJumpHost.equalsIgnoreCase(currentHost)
                         && (TextUtils.isEmpty(targetHost) || !isAd(targetHost))) {
+                    // v73:放行的点按到达新页后,让 mJumpHost 跟到新页一次(修 v72 mUserGestured 缺陷)。
+                    mFollowJumpHost = true;
                     return false;
                 }
                 if (!TextUtils.isEmpty(targetHost) && !TextUtils.isEmpty(currentHost)
@@ -1671,47 +1673,6 @@ public class WebPlayActivity extends BaseActivity implements EpisodeAdapter.OnCl
                 return false;
             }
 
-            /** v107：弹窗广告路径——点播/点按触发的 window.open 弹窗，壳子单窗口时会被当成主框导航。
-             * 特征：短路径、空白页、立即跳广告域名。只拦这几个通用弹窗路径名，不碰正片/分类地址
-             *（片名、分类、选集路径里不会单独叫 pop/popunder/popup）。 */
-            private boolean isPopunderPath(String path) {
-                if (TextUtils.isEmpty(path)) return false;
-                String p = path.toLowerCase(Locale.US);
-                if (p.endsWith("/")) p = p.substring(0, p.length() - 1);
-                return p.equals("/pop") || p.equals("/popunder") || p.equals("/popup")
-                        || p.endsWith("/pop") || p.endsWith("/popunder") || p.endsWith("/popup");
-            }
-
-            /** 同站：同域名，或互为子域名（如 mtyy2.cc 与 www.mtyy2.cc），
-             * 或兄弟子域（如 www.hkybqufgh.com 与 m.hkybqufgh.com——金牌首页 302 到 m 站，
-             * 旧判法当跨站拦掉，webview 一片白）。 */
-            private boolean sameSite(String a, String b) {
-                if (a.equals(b) || a.endsWith("." + b) || b.endsWith("." + a)) return true;
-                String ra = registrableDomain(a), rb = registrableDomain(b);
-                return ra != null && ra.equals(rb);
-            }
-
-            /** v92：中转站跳转——目标地址里带了当前页地址（域名）。hsck 发布页拼的是
-             * https://32d233.com:8899/?u=http://hsck.net/&p=/ ，中转站拿 u= 去换最新域名，再 302 跟过去。
-             * URL 编码的 u=（u=http%3A%2F%2Fhsck.net%2F）里域名本身不编码，contains 照样命中。 */
-            private boolean isJumpServiceUrl(String targetUrl, String currentHost) {
-                if (targetUrl == null || targetUrl.isEmpty() || currentHost == null || currentHost.isEmpty()) return false;
-                return targetUrl.toLowerCase(Locale.US).contains(currentHost.toLowerCase(Locale.US));
-            }
-
-            /** 注册域（eTLD+1 的近似）：多级公共后缀取后三段，其余取后两段。 */
-            private static String registrableDomain(String host) {
-                if (host == null) return null;
-                String[] parts = host.toLowerCase(java.util.Locale.ROOT).split("\\.");
-                if (parts.length < 2) return host;
-                String last2 = parts[parts.length - 2] + "." + parts[parts.length - 1];
-                // 常见多级公共后缀（co.uk / com.cn 等），这些上面再取一段才是注册域。
-                if (parts.length >= 3 && ("co.uk,org.uk,ac.uk,com.cn,net.cn,org.cn,gov.cn,edu.cn,co.jp,com.au,net.au,org.au,com.hk,com.tw,co.kr,com.sg".contains(last2))) {
-                    return parts[parts.length - 3] + "." + last2;
-                }
-                return last2;
-            }
-
             @Override
             public void onPageStarted(WebView view, String url, Bitmap favicon) {
                 super.onPageStarted(view, url, favicon);
@@ -1719,7 +1680,11 @@ public class WebPlayActivity extends BaseActivity implements EpisodeAdapter.OnCl
                 // v72：初始页跳转跟进——防丢url/发布站自动跳到真正的发布页时（如 n.plmmttv7y7m.com → vip1949.com），
                 // mJumpHost 还是起跳站 host，与当前页对不上，v61 例外不生效。用户点按前一次性跟进到新 host；
                 // 新 host 是广告域名时不跟进；用户一点按就不再跟进。
-                if (!mUserGestured && !TextUtils.isEmpty(mJumpHost)) {
+                // v73:mFollowJumpHost——经放行的点按/新窗口到达新页时也跟一次(修 v72 mUserGestured 缺陷:
+                // mUserGestured 一旦置 true 永不复位,点按到达发布页后 mJumpHost 卡在旧 host,v61 永远对不上)。
+                boolean followJumpHost = !mUserGestured || mFollowJumpHost;
+                mFollowJumpHost = false;
+                if (followJumpHost && !TextUtils.isEmpty(mJumpHost)) {
                     try {
                         String newHost = Uri.parse(url).getHost();
                         if (!TextUtils.isEmpty(newHost) && !newHost.equalsIgnoreCase(mJumpHost) && !isAd(newHost)) {
@@ -1807,6 +1772,47 @@ public class WebPlayActivity extends BaseActivity implements EpisodeAdapter.OnCl
 
     private WebChromeClient webChromeClient() {
         return new WebChromeClient() {
+            @Override
+            public boolean onCreateWindow(WebView view, boolean isDialog, boolean isUserGesture, Message resultMsg) {
+                // v73:拦截新窗口请求(target="_blank" / window.open),在当前 WebView 打开。
+                // 新窗口的 URL 不直接给出:建一个临时 WebView 接住它,在其 shouldOverrideUrlLoading 里
+                // 用 isAllowedNewWindowUrl 判断(与 shouldOverrideUrlLoading 同一套规则)。
+                // 注意:这里只处理新窗口请求;同标签的自动跨域跳转走 shouldOverrideUrlLoading,照旧拦截。
+                WebView tempWebView = new WebView(view.getContext());
+                tempWebView.setWebViewClient(new WebViewClient() {
+                    private boolean mHandled = false;
+
+                    private void handleNewWindowUrl(String url) {
+                        if (mHandled) return;
+                        mHandled = true;
+                        if (!TextUtils.isEmpty(url) && !url.equals("about:blank")
+                                && isAllowedNewWindowUrl(url, isUserGesture)) {
+                            // 放行:在当前 WebView 打开;让 mJumpHost 跟到新页(修 v72 mUserGestured 缺陷)。
+                            mFollowJumpHost = true;
+                            view.loadUrl(url);
+                        }
+                        // 拦:什么都不做。销毁临时 WebView。
+                        tempWebView.post(tempWebView::destroy);
+                    }
+
+                    @Override
+                    public boolean shouldOverrideUrlLoading(WebView v, WebResourceRequest request) {
+                        handleNewWindowUrl(request.getUrl().toString());
+                        return true;
+                    }
+
+                    @Override
+                    public void onPageStarted(WebView v, String url, Bitmap favicon) {
+                        // 兜底:若 shouldOverrideUrlLoading 未被调用,在这里拦截。
+                        handleNewWindowUrl(url);
+                    }
+                });
+                WebView.WebViewTransport transport = (WebView.WebViewTransport) resultMsg.obj;
+                transport.setWebView(tempWebView);
+                resultMsg.sendToTarget();
+                return true;
+            }
+
             @Override
             public void onProgressChanged(WebView view, int newProgress) {
                 mBinding.progress.setProgress(newProgress);
@@ -1959,6 +1965,95 @@ public class WebPlayActivity extends BaseActivity implements EpisodeAdapter.OnCl
             if (!Character.isDigit(s.charAt(i))) return false;
         }
         return true;
+    }
+
+    /** v107：弹窗广告路径——点播/点按触发的 window.open 弹窗，壳子单窗口时会被当成主框导航。
+     * 特征：短路径、空白页、立即跳广告域名。只拦这几个通用弹窗路径名，不碰正片/分类地址
+     *（片名、分类、选集路径里不会单独叫 pop/popunder/popup）。 */
+    private boolean isPopunderPath(String path) {
+        if (TextUtils.isEmpty(path)) return false;
+        String p = path.toLowerCase(Locale.US);
+        if (p.endsWith("/")) p = p.substring(0, p.length() - 1);
+        return p.equals("/pop") || p.equals("/popunder") || p.equals("/popup")
+                || p.endsWith("/pop") || p.endsWith("/popunder") || p.endsWith("/popup");
+    }
+
+    /** 同站：同域名，或互为子域名（如 mtyy2.cc 与 www.mtyy2.cc），
+     * 或兄弟子域（如 www.hkybqufgh.com 与 m.hkybqufgh.com——金牌首页 302 到 m 站，
+     * 旧判法当跨站拦掉，webview 一片白）。 */
+    private boolean sameSite(String a, String b) {
+        if (a.equals(b) || a.endsWith("." + b) || b.endsWith("." + a)) return true;
+        String ra = registrableDomain(a), rb = registrableDomain(b);
+        return ra != null && ra.equals(rb);
+    }
+
+    /** v92：中转站跳转——目标地址里带了当前页地址（域名）。hsck 发布页拼的是
+     * https://32d233.com:8899/?u=http://hsck.net/&p=/ ，中转站拿 u= 去换最新域名，再 302 跟过去。
+     * URL 编码的 u=（u=http%3A%2F%2Fhsck.net%2F）里域名本身不编码，contains 照样命中。 */
+    private boolean isJumpServiceUrl(String targetUrl, String currentHost) {
+        if (targetUrl == null || targetUrl.isEmpty() || currentHost == null || currentHost.isEmpty()) return false;
+        return targetUrl.toLowerCase(Locale.US).contains(currentHost.toLowerCase(Locale.US));
+    }
+
+    /** 注册域（eTLD+1 的近似）：多级公共后缀取后三段，其余取后两段。 */
+    private static String registrableDomain(String host) {
+        if (host == null) return null;
+        String[] parts = host.toLowerCase(java.util.Locale.ROOT).split("\\.");
+        if (parts.length < 2) return host;
+        String last2 = parts[parts.length - 2] + "." + parts[parts.length - 1];
+        // 常见多级公共后缀（co.uk / com.cn 等），这些上面再取一段才是注册域。
+        if (parts.length >= 3 && ("co.uk,org.uk,ac.uk,com.cn,net.cn,org.cn,gov.cn,edu.cn,co.jp,com.au,net.au,org.au,com.hk,com.tw,co.kr,com.sg".contains(last2))) {
+            return parts[parts.length - 3] + "." + last2;
+        }
+        return last2;
+    }
+
+    /** v73:新窗口请求(target="_blank" / window.open)放行判断,与 shouldOverrideUrlLoading 同一套规则。
+     * 只放行合法跳转:发布页人工点按到非广告域名、同站、中转站;其余一律拦(自动跨域跳转、/pop、广告域名)。
+     * 注意:自动跨域跳转(无手势、非中转、无线链)在这里也是拦——不要把它改成放行。 */
+    private boolean isAllowedNewWindowUrl(String url, boolean hasGesture) {
+        if (TextUtils.isEmpty(url)) return false;
+        Uri uri;
+        try {
+            uri = Uri.parse(url);
+        } catch (Exception e) {
+            return false;
+        }
+        String scheme = uri.getScheme();
+        if (!"http".equals(scheme) && !"https".equals(scheme) && !"blob".equals(scheme)) return false;
+        String targetHost = uri.getHost();
+        String currentHost = null;
+        try {
+            String cur = mBinding.web.getUrl();
+            if (!TextUtils.isEmpty(cur)) currentHost = Uri.parse(cur).getHost();
+        } catch (Exception ignored) {
+        }
+        if (TextUtils.isEmpty(currentHost)) {
+            try {
+                if (!TextUtils.isEmpty(mAnchorUrl)) currentHost = Uri.parse(mAnchorUrl).getHost();
+            } catch (Exception ignored) {
+            }
+        }
+        // /pop 弹窗路径一律拦(与 v107 同)。
+        if (isPopunderPath(uri.getPath())) return false;
+        // v61:当前页是跳转页 + 带手势 + 目标非广告 → 放行(发布页人工点按到真实站)。
+        if (hasGesture && !TextUtils.isEmpty(mJumpHost)
+                && !TextUtils.isEmpty(currentHost) && mJumpHost.equalsIgnoreCase(currentHost)
+                && (TextUtils.isEmpty(targetHost) || !isAd(targetHost))) {
+            return true;
+        }
+        // 同站放行。
+        if (!TextUtils.isEmpty(targetHost) && !TextUtils.isEmpty(currentHost) && sameSite(targetHost, currentHost)) {
+            return true;
+        }
+        // v92:无手势的中转跳转(目标地址里带当前页地址)放行,并记跳转链供 302 跟进。
+        if (!hasGesture && isJumpServiceUrl(url, currentHost)) {
+            mJumpAnchorHost = currentHost;
+            mJumpRelayHost = targetHost;
+            mJumpChainUntil = SystemClock.uptimeMillis() + 10000;
+            return true;
+        }
+        return false;
     }
 
     private boolean isAd(String host) {
