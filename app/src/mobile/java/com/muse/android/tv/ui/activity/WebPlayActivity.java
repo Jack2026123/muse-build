@@ -1013,7 +1013,7 @@ public class WebPlayActivity extends BaseActivity implements EpisodeAdapter.OnCl
         "tion isContent(el){if(!el||!el.querySelector)return false;if(el.querySelector('a[href*=\"/voddetail/\"],a[href*=",
         "\"/vodplay/\"],a[href*=\"/video/\"],a[href*=\"/player/\"],a[href*=\"/v5/\"]'))return true;if(el.querySelector('#go_btn",
         ",#time_badge,#read_zone'))return true;return false;}function foreign(u){try{var x=new URL(u,location.href);ret",
-        "urn !!x.hostname&&x.hostname!==host;}catch(e){return false;}}function isPlaceholderHref(h){if(!h)return true;h",
+        "urn !!x.hostname&&x.hostname!==host;}catch(e){return false;}}function isRealSite(){var as=document.querySelectorAll(\'a[href]\');var n=0;for(var i=0;i<as.length;i++){var h=as[i].getAttribute(\'href\')||\'\';if(foreign(h))continue;var p=\'\';try{p=new URL(h,location.href).pathname;}catch(e){continue;}if(p.indexOf(\'/vodtype/\')===0||p.indexOf(\'/voddetail/\')===0||p.indexOf(\'/vodplay/\')===0){if(++n>=2)return true;}}return false;}function isPlaceholderHref(h){if(!h)return true;h",
         "=String(h).trim().toLowerCase();return h===''||h.charAt(0)==='#'||h.indexOf('javascript:')===0;}function inSam",
         "eHostLink(el){var a=el&&el.closest?el.closest('a'):null;return !!(a&&a.href&&!foreign(a.href));}function isOpa",
         "queImg(s){return s&&(s.indexOf('blob:')===0||s.indexOf('data:')===0);}function txt(el){return (el.innerText||'",
@@ -1056,7 +1056,8 @@ public class WebPlayActivity extends BaseActivity implements EpisodeAdapter.OnCl
         "og.push(rule+':'+(el.tagName||'')+'.'+String(cn).slice(0,30));}}catch(e){}}\nfunction sweep(){killLoaderPadding",
         "();killPreRoll();pruneExtraVideos();",
         // v76：假分类/假视频（跳转完成后，外链 <a> 藏掉；真分类/真视频是站内相对路径）+ 赌博横幅墙（javascript:void(0) 含图 <a> 藏掉）。
-        "/*v76*/if(window.__museJumpDone){var __museFAs=document.querySelectorAll('a[href]');for(var __museFI=0;__museFI<__museFAs.length;__museFI++){var __museFA=__museFAs[__museFI];if(!__museFA.isConnected)continue;if(inAgeGate(__museFA))continue;if(isContent(__museFA))continue;if(!foreign(__museFA.href))continue;kill(__museFA);}var __museVAs=document.querySelectorAll('a[href^=\"javascript:void(0)\"]');for(var __museVI=0;__museVI<__museVAs.length;__museVI++){var __museVA=__museVAs[__museVI];if(!__museVA.isConnected)continue;if(inAgeGate(__museVA))continue;if(!__museVA.querySelector('img'))continue;kill(__museVA);}}",
+        // v77：直接进站也激活——isRealSite()（页含 ≥2 站内正片链接即真实站）时同样触发；发布站页无站内正片链接，不触发。
+        "/*v77*/if(window.__museJumpDone||isRealSite()){var __museFAs=document.querySelectorAll('a[href]');for(var __museFI=0;__museFI<__museFAs.length;__museFI++){var __museFA=__museFAs[__museFI];if(!__museFA.isConnected)continue;if(inAgeGate(__museFA))continue;if(isContent(__museFA))continue;if(!foreign(__museFA.href))continue;kill(__museFA);}var __museVAs=document.querySelectorAll('a[href^=\"javascript:void(0)\"]');for(var __museVI=0;__museVI<__museVAs.length;__museVI++){var __museVA=__museVAs[__museVI];if(!__museVA.isConnected)continue;if(inAgeGate(__museVA))continue;if(!__museVA.querySelector('img'))continue;kill(__museVA);}}",
         "var as=document.querySelectorAll('a[href]');for(var i=0;i<as.length;i++){v",
         "ar a=as[i];if(!a.isConnected)continue;if(inAgeGate(a))continue;if(!isAdUrl(a.href))continue;var rel=(a.getAttr",
         "ibute('rel')||'').toLowerCase();var spon=rel.indexOf('sponsored')>=0;var hasImg=!!a.querySelector('img');var h",
@@ -1781,6 +1782,20 @@ public class WebPlayActivity extends BaseActivity implements EpisodeAdapter.OnCl
                 evaluate(getScript(url), 0);
                 // v97：不再立即显示——等 CLEAN_JS 回调再显示，否则分类页加载快会抢在首扫前闪出横幅墙（同 onPageCommitVisible）。
                 evalCleanJs(view);
+                // v77：直接进站也算“跳转完成”——入口页加载完，若是真实站（含 ≥2 站内正片链接），清 mJumpHost 激活 v76 规则；发布站页无站内正片链接，不触发。
+                if (!mJumpUsed && !TextUtils.isEmpty(mJumpHost)) {
+                    String curHost = null;
+                    try { curHost = Uri.parse(url).getHost(); } catch (Exception ignored) {}
+                    if (!TextUtils.isEmpty(curHost) && curHost.equalsIgnoreCase(mJumpHost)) {
+                        view.evaluateJavascript("(function(){var as=document.querySelectorAll('a[href]');var n=0;for(var i=0;i<as.length;i++){var h=as[i].getAttribute('href')||'';if(h.indexOf('/vodtype/')===0||h.indexOf('/voddetail/')===0||h.indexOf('/vodplay/')===0){if(++n>=2)return true;}}return false;})()", value -> {
+                            if ("true".equals(value)) {
+                                mJumpHost = "";
+                                mJumpUsed = false;
+                                mJumpOriginHost = null;
+                            }
+                        });
+                    }
+                }
                 // v56：把 Cookie 落盘——cf_clearance 只留在内存里时进程一死验证就丢；flush 后重进、刷新仍有效。
                 CookieManager.getInstance().flush();
                 // v100：空白页回滚——被拦的广告跳转有时会把当前页卸成空文档（标题空、无视频、无图），
