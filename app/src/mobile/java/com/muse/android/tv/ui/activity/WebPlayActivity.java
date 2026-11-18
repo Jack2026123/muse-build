@@ -1054,7 +1054,10 @@ public class WebPlayActivity extends BaseActivity implements EpisodeAdapter.OnCl
         "noteHide(rule,el){try{if(!window.__museHideLog)window.__museHideLog=[];if(window.__museHideLog.length<20){var ",
         "cn=(el.className&&el.className.baseVal!==undefined)?el.className.baseVal:(el.className||'');window.__museHideL",
         "og.push(rule+':'+(el.tagName||'')+'.'+String(cn).slice(0,30));}}catch(e){}}\nfunction sweep(){killLoaderPadding",
-        "();killPreRoll();pruneExtraVideos();var as=document.querySelectorAll('a[href]');for(var i=0;i<as.length;i++){v",
+        "();killPreRoll();pruneExtraVideos();",
+        // v76：假分类/假视频（跳转完成后，外链 <a> 藏掉；真分类/真视频是站内相对路径）+ 赌博横幅墙（javascript:void(0) 含图 <a> 藏掉）。
+        "/*v76*/if(window.__museJumpDone){var __museFAs=document.querySelectorAll('a[href]');for(var __museFI=0;__museFI<__museFAs.length;__museFI++){var __museFA=__museFAs[__museFI];if(!__museFA.isConnected)continue;if(inAgeGate(__museFA))continue;if(isContent(__museFA))continue;if(!foreign(__museFA.href))continue;kill(__museFA);}var __museVAs=document.querySelectorAll('a[href^=\"javascript:void(0)\"]');for(var __museVI=0;__museVI<__museVAs.length;__museVI++){var __museVA=__museVAs[__museVI];if(!__museVA.isConnected)continue;if(inAgeGate(__museVA))continue;if(!__museVA.querySelector('img'))continue;kill(__museVA);}}",
+        "var as=document.querySelectorAll('a[href]');for(var i=0;i<as.length;i++){v",
         "ar a=as[i];if(!a.isConnected)continue;if(inAgeGate(a))continue;if(!isAdUrl(a.href))continue;var rel=(a.getAttr",
         "ibute('rel')||'').toLowerCase();var spon=rel.indexOf('sponsored')>=0;var hasImg=!!a.querySelector('img');var h",
         "asBg=false;if(!spon){var dv2=a.querySelectorAll('div');for(var q=0;q<dv2.length;q++){var de=dv2[q];if(de.getAt",
@@ -1352,6 +1355,9 @@ public class WebPlayActivity extends BaseActivity implements EpisodeAdapter.OnCl
     private boolean mUserGestured = false;
     /** v73:经放行的点按/新窗口到达新页时,让 mJumpHost 跟到新页一次(修 v72 mUserGestured 缺陷)。 */
     private boolean mFollowJumpHost = false;
+    /** v76：跳转已用——v61/v74/v92 放行一次跨站跳转后记下起跳 host；真实站落地时清 mJumpHost，之后真实站上的跨站点击不再放行（假分类/假视频）。 */
+    private boolean mJumpUsed = false;
+    private String mJumpOriginHost = null;
     // v93 跳转链路(v73 起放 Activity 层:onCreateWindow 放行中转跳转后也要记,供 302 跟进认)。
     private String mJumpAnchorHost = null;
     private String mJumpRelayHost = null;
@@ -1441,6 +1447,8 @@ public class WebPlayActivity extends BaseActivity implements EpisodeAdapter.OnCl
             } catch (Exception ignored) {
             }
         }
+        mJumpUsed = false;
+        mJumpOriginHost = null;
         ArrayList<String> names = intent.getStringArrayListExtra("names");
         if (names != null) mNames = names;
         ArrayList<String> ids = intent.getStringArrayListExtra("ids");
@@ -1653,13 +1661,16 @@ public class WebPlayActivity extends BaseActivity implements EpisodeAdapter.OnCl
                 }
                 // v61：发布站/跳转页上的人工点按放行——主页本身就是发布站/防丢url 或 [工具:重定向] 跳转页时，
                 // 用户在该页上点按进真实站是正常操作（有些发布站不自动跳，必须人工点）。只放行「当前页就是跳转页」
-                // 且带手势的点按；目标是已知广告域名时照样拦。一旦落到真实站，currentHost 变了，这里不再生效，
-                // 防广告劫持的规矩照旧。
+                // 且带手势的点按；目标是已知广告域名时照样拦。v76：落到真实站即清 mJumpHost，这里不再生效
+                //（之前 mJumpHost 会跟到真实站，假分类/假视频也被放行）；防广告劫持的规矩照旧。
                 if (request.hasGesture() && !TextUtils.isEmpty(mJumpHost)
                         && !TextUtils.isEmpty(currentHost) && mJumpHost.equalsIgnoreCase(currentHost)
                         && (TextUtils.isEmpty(targetHost) || !isAd(targetHost))) {
                     // v73:放行的点按到达新页后,让 mJumpHost 跟到新页一次(修 v72 mUserGestured 缺陷)。
                     mFollowJumpHost = true;
+                    // v76：记下这次跳转（起跳 host），真实站落地时清 mJumpHost。
+                    mJumpUsed = true;
+                    mJumpOriginHost = currentHost;
                     return false;
                 }
                 // v74：跳转页上的无手势跳转放行——发布站/中间页自动跳到最新真实域名时，
@@ -1671,6 +1682,9 @@ public class WebPlayActivity extends BaseActivity implements EpisodeAdapter.OnCl
                 if (!request.hasGesture() && !TextUtils.isEmpty(mJumpHost)
                         && !TextUtils.isEmpty(currentHost) && mJumpHost.equalsIgnoreCase(currentHost)
                         && (TextUtils.isEmpty(targetHost) || !isAd(targetHost))) {
+                    // v76：记下这次跳转（起跳 host），真实站落地时清 mJumpHost。
+                    mJumpUsed = true;
+                    mJumpOriginHost = currentHost;
                     return false;
                 }
                 if (!TextUtils.isEmpty(targetHost) && !TextUtils.isEmpty(currentHost)
@@ -1684,6 +1698,9 @@ public class WebPlayActivity extends BaseActivity implements EpisodeAdapter.OnCl
                         mJumpAnchorHost = currentHost;
                         mJumpRelayHost = targetHost;
                         mJumpChainUntil = SystemClock.uptimeMillis() + 10000;
+                        // v76：记下这次跳转（起跳 host），真实站落地时清 mJumpHost。
+                        mJumpUsed = true;
+                        mJumpOriginHost = currentHost;
                         return false;
                     }
                     // v93：已放行跳转的 302 跟进——无手势 + 10 秒内 + 起跳站/中转站仍是当前页
@@ -1722,6 +1739,20 @@ public class WebPlayActivity extends BaseActivity implements EpisodeAdapter.OnCl
                     } catch (Exception ignored) {
                     }
                 }
+                // v76：跳转已用且新页 host 与起跳 host 不同 → 跳转完成（落到真实站），清 mJumpHost；
+                // 此后真实站上的跨站点击不再走 v61/v74 放行（假分类/假视频点按即拦），CLEAN_JS 的 __museJumpDone 也随之置真。
+                // 同 host 新页（shewo 中间页）不清除；用户点按前（mJumpUsed 假，如防丢 url 预跳）不清除。
+                if (mJumpUsed && mJumpOriginHost != null) {
+                    try {
+                        String landHost = Uri.parse(url).getHost();
+                        if (!TextUtils.isEmpty(landHost) && !landHost.equalsIgnoreCase(mJumpOriginHost)) {
+                            mJumpHost = "";
+                            mJumpUsed = false;
+                            mJumpOriginHost = null;
+                        }
+                    } catch (Exception ignored) {
+                    }
+                }
                 // v96：先藏 webview，等 CLEAN_JS 首扫跑完再显示——hsck 首页顶部 58 条赌博横幅在首扫前会闪约 0.25 秒。
                 mBlankRecovered = false;
                 if (mBlankRecheck != null) view.removeCallbacks(mBlankRecheck);
@@ -1736,7 +1767,7 @@ public class WebPlayActivity extends BaseActivity implements EpisodeAdapter.OnCl
                 super.onPageCommitVisible(view, url);
                 if (url == null || url.equals("about:blank")) return;
 
-                view.evaluateJavascript(CLEAN_JS, value -> view.setVisibility(View.VISIBLE));
+                evalCleanJs(view);
             }
 
             @Override
@@ -1749,7 +1780,7 @@ public class WebPlayActivity extends BaseActivity implements EpisodeAdapter.OnCl
                 mJumpChainUntil = 0;
                 evaluate(getScript(url), 0);
                 // v97：不再立即显示——等 CLEAN_JS 回调再显示，否则分类页加载快会抢在首扫前闪出横幅墙（同 onPageCommitVisible）。
-                view.evaluateJavascript(CLEAN_JS, value -> view.setVisibility(View.VISIBLE));
+                evalCleanJs(view);
                 // v56：把 Cookie 落盘——cf_clearance 只留在内存里时进程一死验证就丢；flush 后重进、刷新仍有效。
                 CookieManager.getInstance().flush();
                 // v100：空白页回滚——被拦的广告跳转有时会把当前页卸成空文档（标题空、无视频、无图），
@@ -2042,6 +2073,12 @@ public class WebPlayActivity extends BaseActivity implements EpisodeAdapter.OnCl
     /** v73:新窗口请求(target="_blank" / window.open)放行判断,与 shouldOverrideUrlLoading 同一套规则。
      * 只放行合法跳转:发布页人工点按到非广告域名、同站、中转站;其余一律拦(自动跨域跳转、/pop、广告域名)。
      * 注意:自动跨域跳转(无手势、非中转、无线链)在这里也是拦——不要把它改成放行。 */
+    /** v76：跑 CLEAN_JS 前先把跳转状态（真实站落地与否）告诉页面，供假链接/广告墙规则用。 */
+    private void evalCleanJs(WebView view) {
+        String flag = "window.__museJumpDone=" + (TextUtils.isEmpty(mJumpHost) ? "true" : "false") + ";";
+        view.evaluateJavascript(flag + CLEAN_JS, value -> view.setVisibility(View.VISIBLE));
+    }
+
     private boolean isAllowedNewWindowUrl(String url, boolean hasGesture) {
         if (TextUtils.isEmpty(url)) return false;
         Uri uri;
@@ -2071,6 +2108,9 @@ public class WebPlayActivity extends BaseActivity implements EpisodeAdapter.OnCl
         if (hasGesture && !TextUtils.isEmpty(mJumpHost)
                 && !TextUtils.isEmpty(currentHost) && mJumpHost.equalsIgnoreCase(currentHost)
                 && (TextUtils.isEmpty(targetHost) || !isAd(targetHost))) {
+            // v76：记下这次跳转（起跳 host），真实站落地时清 mJumpHost。
+            mJumpUsed = true;
+            mJumpOriginHost = currentHost;
             return true;
         }
         // v74:当前页是跳转页 + 无手势 + 目标非广告 → 放行(与 shouldOverrideUrlLoading 同口径；
@@ -2078,6 +2118,9 @@ public class WebPlayActivity extends BaseActivity implements EpisodeAdapter.OnCl
         if (!hasGesture && !TextUtils.isEmpty(mJumpHost)
                 && !TextUtils.isEmpty(currentHost) && mJumpHost.equalsIgnoreCase(currentHost)
                 && (TextUtils.isEmpty(targetHost) || !isAd(targetHost))) {
+            // v76：记下这次跳转（起跳 host），真实站落地时清 mJumpHost。
+            mJumpUsed = true;
+            mJumpOriginHost = currentHost;
             return true;
         }
         // 同站放行。
@@ -2089,6 +2132,9 @@ public class WebPlayActivity extends BaseActivity implements EpisodeAdapter.OnCl
             mJumpAnchorHost = currentHost;
             mJumpRelayHost = targetHost;
             mJumpChainUntil = SystemClock.uptimeMillis() + 10000;
+            // v76：记下这次跳转（起跳 host），真实站落地时清 mJumpHost。
+            mJumpUsed = true;
+            mJumpOriginHost = currentHost;
             return true;
         }
         return false;
