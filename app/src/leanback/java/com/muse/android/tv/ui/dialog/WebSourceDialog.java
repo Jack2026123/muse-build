@@ -24,13 +24,14 @@ import com.muse.android.tv.utils.ResUtil;
 import java.util.List;
 
 /**
- * v28 网页源：电视设置页入口（手机版 v62 在设置页，电视按 leanback 写法落）。
+ * v22 网页源（电视版，移植自主线手机 v61/v62）：设置页「本地源」行下的「添加网页源」入口。
  * 输网址（必填）+ 名称（可选，留空自动取域名），追加到当前配置 sites 数组末尾，
- * 写完重载配置，新站立刻出现在切站列表里。逻辑与手机版 WebSourceDialog 一致，
- * 控件换成 leanback 弹窗形态（BaseAlertDialog + CustomEditText + 遥控器按钮）。
- * v67：点确定先走权限统一门（与手机版同款）；通过后自动重试本次添加，拒绝弹
+ * 写完重载配置，新站立刻出现在切站列表里。
+ * 电视写法：BaseAlertDialog + dialog_web_source.xml（CustomEditText 行式输入 + 底部确认/取消，
+ * 与电视版 ConfigDialog 同款），不用手机版程序拼 AlertDialog 的写法。
+ * v25：点确定先走权限统一门（同步主线手机 v67）；通过后自动重试本次添加，拒绝弹
  * 权限提示 +「去设置」。
- * v36 批量导入：同一弹窗的批量模式（showBatch），只留多行网址框，不设字节上限；
+ * v28 批量导入：同一弹窗的批量模式（showBatch），只留多行网址框，不设字节上限；
  * 确认后先纯解析，100 条及以上弹横向进度框、后台线程逐条追加，进度发回主线程刷新。
  */
 public class WebSourceDialog extends BaseAlertDialog {
@@ -38,10 +39,11 @@ public class WebSourceDialog extends BaseAlertDialog {
     private DialogWebSourceBinding binding;
 
     public static void show(FragmentActivity activity) {
+        if (activity == null) return;
         new WebSourceDialog().show(activity.getSupportFragmentManager(), null);
     }
 
-    /** v36：批量导入入口——与单个添加共用同一弹窗，批量模式只留多行网址框。 */
+    /** v28：批量导入入口——与单个添加共用同一弹窗，批量模式只留多行网址框。 */
     public static void showBatch(FragmentActivity activity) {
         WebSourceDialog dialog = new WebSourceDialog();
         Bundle args = new Bundle();
@@ -67,7 +69,7 @@ public class WebSourceDialog extends BaseAlertDialog {
     @Override
     protected void initView() {
         if (isBatch()) {
-            // v36 批量模式：只要多行网址框——多行输入、不设字节上限（清掉长度过滤器），
+            // v28 批量模式：只要多行网址框——多行输入、不设字节上限（清掉长度过滤器），
             // 名称框隐藏（key/name 一律取域名），提示换成批量说明
             binding.name.setVisibility(View.GONE);
             binding.url.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE);
@@ -90,13 +92,9 @@ public class WebSourceDialog extends BaseAlertDialog {
     protected void initEvent() {
         binding.positive.setOnClickListener(view -> {
             if (isBatch()) onBatchPositive();
-            else onPositive(view);
+            else onPositive();
         });
-        binding.negative.setOnClickListener(view -> dismiss());
-        binding.name.setOnEditorActionListener((textView, actionId, event) -> {
-            if (actionId == EditorInfo.IME_ACTION_DONE) binding.positive.performClick();
-            return true;
-        });
+        binding.negative.setOnClickListener(v -> dismiss());
         binding.url.setOnEditorActionListener((textView, actionId, event) -> {
             if (isBatch() && actionId == EditorInfo.IME_ACTION_DONE) {
                 binding.positive.performClick();
@@ -106,7 +104,7 @@ public class WebSourceDialog extends BaseAlertDialog {
         });
     }
 
-    /** v36：批量导入确认——先纯解析得 URL 列表，空列表直接提示；再走权限门，通过后后台线程导入。 */
+    /** v28：批量导入确认——先纯解析得 URL 列表，空列表直接提示；再走权限门，通过后后台线程导入。 */
     private void onBatchPositive() {
         String raw = binding.url.getText() == null ? "" : binding.url.getText().toString();
         List<String> urls = LocalSourceHub.parseBatchWebSourceUrls(raw);
@@ -114,7 +112,7 @@ public class WebSourceDialog extends BaseAlertDialog {
             Notify.show(R.string.web_source_batch_empty);
             return;
         }
-        // v67 同款权限门：已授予直接跑，未授予弹系统申请，通过后自动重试本次导入
+        // 与单个添加同款权限门：已授予直接跑，未授予弹系统申请，通过后自动重试本次导入
         PermissionUtil.ensureStoragePermission(this,
                 () -> {
                     FragmentActivity activity = requireActivity();
@@ -125,7 +123,7 @@ public class WebSourceDialog extends BaseAlertDialog {
     }
 
     /**
-     * v36：批量导入执行——后台线程逐条追加，不卡界面；
+     * v28：批量导入执行——后台线程逐条追加，不卡界面；
      * 100 条及以上弹横向进度框（ProgressDialog STYLE_HORIZONTAL），进度回调发回主线程刷新
      * 进度条与“已处理 X / 共 Y 条”消息；跑完关进度框，再弹成功/跳过数结果，成功过就重载配置。
      */
@@ -181,7 +179,7 @@ public class WebSourceDialog extends BaseAlertDialog {
         }, "local-source-batch").start();
     }
 
-    private void onPositive(View view) {
+    private void onPositive() {
         String rawUrl = binding.url.getText() == null ? "" : binding.url.getText().toString();
         String webUrl = LocalSourceHub.normalizeWebSourceUrl(LocalSourceHub.sanitizeWebSourceUrl(rawUrl));
         if (webUrl == null) {
@@ -194,21 +192,22 @@ public class WebSourceDialog extends BaseAlertDialog {
             Notify.show(R.string.site_web_source_url_invalid);
             return;
         }
-        // v67：先走权限门；已授予直接加，未授予弹系统申请，通过后自动重试本次添加
+        String done = getString(R.string.site_web_source_done, webName);
+        // v25：先走权限门；已授予直接加，未授予弹系统申请，通过后自动重试本次添加
         PermissionUtil.ensureStoragePermission(this,
                 () -> {
                     dismiss();
-                    addWebSource(webName, webUrl);
+                    addWebSource(webName, webUrl, done);
                 },
                 this::showPermissionDenied);
     }
 
-    private void addWebSource(String name, String url) {
+    private void addWebSource(String name, String url, String done) {
         new Thread(() -> {
             final int result = LocalSourceHub.appendWebSource(name, url);
             App.post(() -> {
-                if (result == LocalSourceHub.WEB_OK || result == LocalSourceHub.WEB_CREATED) {
-                    Notify.show(ResUtil.getString(result == LocalSourceHub.WEB_CREATED ? R.string.site_web_source_created : R.string.site_web_source_done, name));
+                if (result == LocalSourceHub.WEB_OK) {
+                    Notify.show(done);
                     // 写完重载配置：新站立刻进切站列表，不用手动刷新
                     VodConfig.get().init().load(new Callback() {
                         @Override
@@ -228,7 +227,7 @@ public class WebSourceDialog extends BaseAlertDialog {
         }, "local-source-websource").start();
     }
 
-    /** v67：拒绝 / 写盘时才发现没权限：弹权限提示 +「去设置」；弹窗已不在时退回 Toast。 */
+    /** v25：拒绝 / 写盘时才发现没权限：弹权限提示 +「去设置」；弹窗已不在时退回 Toast。 */
     private void showPermissionDenied() {
         if (!isAdded()) {
             Notify.show(R.string.websource_storage_permission_required);
@@ -245,12 +244,4 @@ public class WebSourceDialog extends BaseAlertDialog {
     private static boolean isBlank(String value) {
         return value == null || value.trim().isEmpty();
     }
-
-    @Override
-    public void onStart() {
-        super.onStart();
-        setWidth(0.55f);
-    }
 }
-
-

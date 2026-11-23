@@ -3306,8 +3306,9 @@ public class LocalSourceHub {
     }
 
     /**
-     * v71：单次添加网页源清理 —— 去逗号、去首尾空格，缺 scheme 时补 https://。
-     * 批量导入的 URL 已在 parse 时清理过，重复调是幂等的、无害。
+     * v124：单次添加网页源清理 —— 去逗号、去空格，缺 scheme 时补 https://。
+     * appendWebSource 入口统一调，所有调用方（单次添加手机/电视、批量导入）自动受益；
+     * 批量导入的 URL 已清理过，重复调是幂等的、无害。
      */
     public static String sanitizeWebSourceUrl(String url) {
         if (url == null) return null;
@@ -4851,7 +4852,3 @@ public class LocalSourceHub {
         }
     }
 }
-
-
-
-

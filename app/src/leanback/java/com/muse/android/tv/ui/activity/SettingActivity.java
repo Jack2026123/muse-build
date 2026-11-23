@@ -36,9 +36,9 @@ import com.muse.android.tv.ui.dialog.DohDialog;
 import com.muse.android.tv.ui.dialog.HistoryDialog;
 import com.muse.android.tv.ui.dialog.LiveDialog;
 import com.muse.android.tv.ui.dialog.LocalSourceDialog;
+import com.muse.android.tv.ui.dialog.WebSourceDialog;
 import com.muse.android.tv.ui.dialog.RestoreDialog;
 import com.muse.android.tv.ui.dialog.SiteDialog;
-import com.muse.android.tv.ui.dialog.WebSourceDialog;
 import com.muse.android.tv.utils.FileUtil;
 import com.muse.android.tv.utils.Notify;
 import com.muse.android.tv.utils.PermissionUtil;
@@ -396,4 +396,3 @@ public class SettingActivity extends BaseActivity implements ConfigListener, Sit
         LocalSourceDialog.show(this, this::setLocalSourceText);
     }
 }
-

@@ -111,4 +111,3 @@ public class FileActivity extends BaseActivity implements FileAdapter.OnClickLis
         }
     }
 }
-

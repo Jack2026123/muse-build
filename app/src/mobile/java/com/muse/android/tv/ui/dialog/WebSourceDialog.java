@@ -280,5 +280,3 @@ public class WebSourceDialog {
         return value == null || value.trim().isEmpty();
     }
 }
-
-

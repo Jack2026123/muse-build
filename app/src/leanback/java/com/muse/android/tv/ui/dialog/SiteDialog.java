@@ -244,7 +244,7 @@ public class SiteDialog extends BaseAlertDialog implements SiteAdapter.OnClickLi
         Context context = getContext();
         if (context == null) return;
         boolean web = item.isWebSource();
-        // v35：长按菜单加“移动”（第三项）；网页源没有本地文件，菜单里不显示移动项。
+        // v27：长按菜单加“移动”（第三项）；网页源没有本地文件，菜单里不显示移动项。
         String[] actions = web ? new String[]{
             getString(R.string.site_websource_delete),
             getString(R.string.site_websource_rename)} : new String[]{
@@ -481,14 +481,15 @@ public class SiteDialog extends BaseAlertDialog implements SiteAdapter.OnClickLi
         new Thread(() -> {
             int removed = 0;
             String selfName = null;
+            boolean noPermission = false;
             try {
                 LocalSourceHub.beginBatch();
                 for (Site site : snapshot) {
-                    // v33：网页源没有源文件，走文本级删除摘配置条目（与手机版 v67 同口径）；
-                    // WEB_NOT_FOUND 也算已删（条目已不在文件里，重载后即从列表消失）。
                     if (site.isWebSource()) {
+                        // v25：网页源只删当前配置里的条目，不删文件；删完重载后列表里即消失。
                         int webResult = LocalSourceHub.deleteWebSource(site.getKey());
                         if (webResult == LocalSourceHub.WEB_OK || webResult == LocalSourceHub.WEB_NOT_FOUND) removed++;
+                        else if (webResult == LocalSourceHub.WEB_NO_PERMISSION) noPermission = true;
                         continue;
                     }
                     int result = LocalSourceHub.deleteSiteFile(site.getApi(), site.getExt(), null);
@@ -501,11 +502,13 @@ public class SiteDialog extends BaseAlertDialog implements SiteAdapter.OnClickLi
             }
             final int removedCount = removed;
             final String blockedName = selfName;
+            final boolean denied = noPermission;
             post(() -> {
                 if (!isAdded()) return;
                 if (blockedName != null) showSelfAuthoredHint(getString(R.string.site_self_authored, blockedName));
+                if (denied) Notify.show(R.string.websource_storage_permission_required);
                 if (removedCount == 0) {
-                    Notify.show(R.string.site_del_fail);
+                    if (!denied) Notify.show(R.string.site_del_fail);
                     return;
                 }
                 Notify.show(getString(R.string.site_del_done_multi, removedCount));
@@ -514,7 +517,7 @@ public class SiteDialog extends BaseAlertDialog implements SiteAdapter.OnClickLi
         }, "local-source-delete").start();
     }
 
-    /** v35：单条移动——弹目录树选目的文件夹，搬文件后重载生成新配置（v33 同款逻辑，去掉已删的 ops 退出）。 */
+    /** v27：单条移动——弹目录树选目的文件夹，搬文件后重载生成新配置（主线 v35 同款逻辑）。 */
     private void chooseMoveTargetForSelection(List<Site> targets) {
         Context context = getContext();
         if (context == null || targets.isEmpty()) return;
